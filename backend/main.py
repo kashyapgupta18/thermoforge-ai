@@ -78,7 +78,7 @@ class AIQueryRequest(BaseModel):
     simulation_context: Optional[Dict[str, Any]] = None
 
 
-@app.get("/")
+@app.get("/api/health")
 def read_root():
     return {
         "platform": "THERMOFORGE AI",
@@ -357,8 +357,15 @@ def download_pdf_report():
         filename="THERMOFORGE_AI_Technical_Report.pdf"
     )
 
-# Mount frontend built static files if dist directory exists
+# Mount frontend built static files
 static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
 if os.path.exists(static_dir):
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+else:
+    @app.get("/")
+    def fallback_root():
+        return {
+            "message": "Frontend build directory not found. Please run: cd frontend && npm run build",
+            "api_endpoints": "/docs"
+        }
 
