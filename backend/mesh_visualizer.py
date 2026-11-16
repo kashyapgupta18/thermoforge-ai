@@ -1,7 +1,10 @@
 """
 THERMOFORGE AI - 3D Surface Geometry Extractor for WebGL / Three.js
-Extracts boundary quad faces and triangular surface mesh with interpolated node temperatures
-from the 3D hexahedral finite element mesh.
+Extracts boundary quad faces and triangular surface mesh with:
+- Interpolated vertex node temperatures
+- Heat flux vectors (magnitude & direction -k * ∇T) per face
+- Localized hotspot centroid coordinates
+- Face normals and wireframe edges
 """
 
 import numpy as np
@@ -11,11 +14,15 @@ try:
 except ImportError:
     from thermal_engine import HexahedralMesh
 
-def extract_surface_mesh_for_threejs(mesh: HexahedralMesh, temperatures_celsius: List[float]) -> Dict[str, Any]:
+def extract_surface_mesh_for_threejs(
+    mesh: HexahedralMesh,
+    temperatures_celsius: List[float],
+    conductivity: float = 167.0
+) -> Dict[str, Any]:
     """
     Extracts all exterior boundary faces from active hexahedral elements,
     converts them into triangles (positions, normals, temperature values per vertex),
-    and formats them for Three.js BufferGeometry.
+    computes face-level heat flux vectors, and formats them for Three.js.
     """
     nx, ny, nz = mesh.nx, mesh.ny, mesh.nz
     T_arr = np.array(temperatures_celsius)
@@ -68,8 +75,14 @@ def extract_surface_mesh_for_threejs(mesh: HexahedralMesh, temperatures_celsius:
     scale_factor = 5.0 / max(mesh.lx, mesh.ly, mesh.lz)
     nodes_centered *= scale_factor
 
-    # Track heat source nodes for hotspot marker
+    # Heat flux vectors representation: [origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, magnitude]
+    heat_flux_vectors = []
     heat_source_coords = []
+
+    # Find global peak hotspot
+    hotspot_idx = int(np.argmax(T_arr))
+    hotspot_coord = nodes_centered[hotspot_idx].tolist()
+    hotspot_peak_temp = float(T_arr[hotspot_idx])
 
     for i in range(nx):
         for j in range(ny):
@@ -79,9 +92,21 @@ def extract_surface_mesh_for_threejs(mesh: HexahedralMesh, temperatures_celsius:
 
                 elem_nodes = mesh.get_element_nodes(i, j, k)
                 if mesh.heat_source_elements[i, j, k]:
-                    # Centroid of this die element
                     centroid = np.mean(nodes_centered[elem_nodes], axis=0)
                     heat_source_coords.append(centroid.tolist())
+
+                # Estimate element-level gradient ∇T = [∂T/∂x, ∂T/∂y, ∂T/∂z]
+                # Using simple finite differences between opposed element faces
+                t_elem = T_arr[elem_nodes]
+                dT_dx = (np.mean(t_elem[[1, 2, 6, 5]]) - np.mean(t_elem[[0, 3, 7, 4]])) / mesh.dx
+                dT_dy = (np.mean(t_elem[[2, 3, 6, 7]]) - np.mean(t_elem[[0, 1, 4, 5]])) / mesh.dy
+                dT_dz = (np.mean(t_elem[[4, 5, 6, 7]]) - np.mean(t_elem[[0, 1, 2, 3]])) / mesh.dz
+
+                # Fourier's Law: q_flux = -k * ∇T
+                qx = -conductivity * dT_dx
+                qy = -conductivity * dT_dy
+                qz = -conductivity * dT_dz
+                q_mag = float(np.sqrt(qx**2 + qy**2 + qz**2))
 
                 for f_idx, (di, dj, dk) in enumerate(neighbors):
                     ni, nj, nk = i + di, j + dj, k + dk
@@ -118,6 +143,17 @@ def extract_surface_mesh_for_threejs(mesh: HexahedralMesh, temperatures_celsius:
                         wireframe_lines.extend(nodes_centered[fn[3]].tolist())
                         wireframe_lines.extend(nodes_centered[fn[0]].tolist())
 
+                        # Store sample heat flux vectors on exposed faces (subsampled for clean rendering)
+                        if (i + j + k) % 3 == 0:
+                            face_center = np.mean(nodes_centered[fn], axis=0)
+                            if q_mag > 1e-4:
+                                dir_norm = [float(qx / q_mag), float(qy / q_mag), float(qz / q_mag)]
+                                heat_flux_vectors.append({
+                                    "origin": face_center.tolist(),
+                                    "direction": dir_norm,
+                                    "magnitude": q_mag
+                                })
+
     return {
         "positions": tri_positions,
         "normals": tri_normals,
@@ -125,5 +161,10 @@ def extract_surface_mesh_for_threejs(mesh: HexahedralMesh, temperatures_celsius:
         "wireframe_lines": wireframe_lines,
         "num_triangles": len(tri_positions) // 9,
         "scale_factor": scale_factor,
-        "heat_source_centroids": heat_source_coords
+        "heat_source_centroids": heat_source_coords,
+        "heat_flux_vectors": heat_flux_vectors,
+        "hotspot": {
+            "coordinate": hotspot_coord,
+            "peak_temperature": hotspot_peak_temp
+        }
     }
