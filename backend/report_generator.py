@@ -37,13 +37,21 @@ try:
         MATERIALS, HexahedralMesh, build_complex_heat_sink_geometry,
         run_solver_battle, run_sor_omega_study, verify_3d_analytical_benchmark
     )
-    from .experiment_manager import run_3x3_geometry_complexity_benchmark, compute_energy_balance
+    from .experiment_manager import (
+        run_3x3_geometry_complexity_benchmark,
+        run_parametric_optimization_sweep,
+        compute_energy_balance
+    )
 except ImportError:
     from thermal_engine import (
         MATERIALS, HexahedralMesh, build_complex_heat_sink_geometry,
         run_solver_battle, run_sor_omega_study, verify_3d_analytical_benchmark
     )
-    from experiment_manager import run_3x3_geometry_complexity_benchmark, compute_energy_balance
+    from experiment_manager import (
+        run_3x3_geometry_complexity_benchmark,
+        run_parametric_optimization_sweep,
+        compute_energy_balance
+    )
 
 
 class NumberedCanvas(canvas.Canvas):
@@ -113,7 +121,7 @@ def render_3d_thermal_contours(temp_dir: str) -> str:
     face_nodes = [[0, 4, 7, 3], [1, 2, 6, 5], [0, 1, 5, 4], [3, 7, 6, 2], [0, 3, 2, 1], [4, 5, 6, 7]]
     neighbors = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)]
 
-    cmap = cm.get_cmap('turbo')
+    cmap = plt.get_cmap('turbo')
     global_min, global_max = 60.0, 76.0
 
     for idx, (preset_id, title) in enumerate(presets):
@@ -212,7 +220,7 @@ def generate_benchmark_plots(
 
     plt.axhline(y=1e-6, color='#16a34a', linestyle=':', linewidth=1.5, label='Stopping Tolerance (1.0e-6)')
 
-    plt.title("Full-History Iterative Convergence: Relative Residual ||F - K·T||₂ / ||F||₂ (Every Iteration)",
+    plt.title("Full-History Iterative Convergence: Relative Residual ||F - K·T|| / ||F|| (Every Iteration)",
               fontsize=9.5, fontweight='bold', pad=8)
     plt.xlabel("True Iteration Count (k) — Full Unsampled Trajectory", fontsize=9)
     plt.ylabel("Relative L2 Residual Norm (log scale)", fontsize=9)
@@ -317,14 +325,27 @@ def generate_comprehensive_engineering_pdf(output_filepath: str) -> str:
         omegas=[0.8, 1.0, 1.2, 1.35, 1.5, 1.7, 1.9, 2.05], initial_guess="lumped"
     )
 
-    # 4. 3x3 Geometry-Solver Research Benchmark (9 Experiments)
-    bench_3x3 = run_3x3_geometry_complexity_benchmark(resolution="coarse", sor_omega=1.9, initial_guess="lumped")
+    # 4. 3x3 Geometry-Solver Statistical Research Benchmark (9 Experiments, N=10 Repetitions)
+    bench_3x3 = run_3x3_geometry_complexity_benchmark(
+        resolution="coarse", sor_omega=1.9, initial_guess="lumped", repetitions=10
+    )
 
-    # 5. Medium Resolution Mesh Study
+    # 5. Three-Level (Coarse, Medium, Fine) Spatial Grid Convergence Study
     mesh_medium = build_complex_heat_sink_geometry(preset="advanced_heat_sink", fin_count=7, resolution="medium")
     battle_medium = run_solver_battle(
         mesh_medium, conductivity=167.0, heat_power_watts=65.0, convection_h=45.0,
         sor_omega=1.9, initial_guess="lumped"
+    )
+    mesh_fine = build_complex_heat_sink_geometry(preset="advanced_heat_sink", fin_count=7, resolution="fine")
+    battle_fine = run_solver_battle(
+        mesh_fine, conductivity=167.0, heat_power_watts=65.0, convection_h=45.0,
+        sor_omega=1.9, initial_guess="lumped"
+    )
+
+    # 6. Parametric Design Optimization & Pareto Frontier Study
+    opt_study = run_parametric_optimization_sweep(
+        preset="advanced_heat_sink", material="aluminium_6061",
+        param_name="fin_count", objective="multi_objective"
     )
 
     mesh_study_data = [
@@ -349,6 +370,17 @@ def generate_comprehensive_engineering_pdf(output_filepath: str) -> str:
             "cg_time": battle_medium["solvers"]["conjugate_gradient"]["execution_time_ms"],
             "sor_time": battle_medium["solvers"]["sor"]["execution_time_ms"],
             "eb_err": battle_medium["solvers"]["direct_lu"]["energy_balance"]["relative_error"]
+        },
+        {
+            "res": "Fine (32×24×18)",
+            "dof": battle_fine["mesh_info"]["degrees_of_freedom"],
+            "elems": battle_fine["mesh_info"]["active_elements"],
+            "t_max": battle_fine["solvers"]["direct_lu"]["t_max"],
+            "t_avg": battle_fine["solvers"]["direct_lu"]["t_avg"],
+            "lu_time": battle_fine["solvers"]["direct_lu"]["execution_time_ms"],
+            "cg_time": battle_fine["solvers"]["conjugate_gradient"]["execution_time_ms"],
+            "sor_time": battle_fine["solvers"]["sor"]["execution_time_ms"],
+            "eb_err": battle_fine["solvers"]["direct_lu"]["energy_balance"]["relative_error"]
         }
     ]
 
@@ -531,38 +563,45 @@ def generate_comprehensive_engineering_pdf(output_filepath: str) -> str:
     story.append(Image(fig1, width=6.6*inch, height=3.2*inch))
     story.append(PageBreak())
 
-    # ================= 3. 3x3 GEOMETRY-SOLVER RESEARCH BENCHMARK =================
-    story.append(Paragraph("3. 3 × 3 Geometry-Solver Research Benchmark (Nine Experiments)", h1_style))
+    # ================= 3. 3x3 GEOMETRY-SOLVER STATISTICAL RESEARCH BENCHMARK =================
+    story.append(Paragraph("3. 3 × 3 Geometry-Solver Statistical Research Benchmark (N = 10 Repetitions / Experiment)", h1_style))
     story.append(Paragraph(
-        "To evaluate how topological complexity affects matrix sparsity, factorization fill-in, and iterative convergence, "
-        "all three solvers were executed across three distinct 3D geometries under identical thermal loading (65 W die, "
-        "Aluminium 6061-T6 k = 167 W/(m·K), h = 45 W/(m²·K), T∞ = 20 °C). For each geometry, K and F were assembled once and "
-        "passed unchanged to Direct Sparse LU, Preconditioned Conjugate Gradient, and SOR (ω = 1.90):",
+        "To evaluate how topological complexity affects matrix sparsity, factorization fill-in, and iterative convergence with "
+        "statistical rigor, all three solvers were executed across three distinct 3D geometries under identical thermal loading "
+        "(65 W die, Aluminium 6061-T6 k = 167 W/(m·K), h = 45 W/(m²·K), T∞ = 20 °C). Each of the nine (geometry × solver) "
+        "experiments was repeated N = 10 independent times; median runtime is used as the primary performance metric to eliminate "
+        "OS scheduling outliers:",
         body_style
     ))
 
-    exp_rows = [["Exp", "Geometry (DOF / Sparsity)", "Solver Algorithm", "Status", "Time (ms)", "Iters", "Rel. Residual", "Mem (MB)", "T_max (°C)", "ΔT vs LU (°C)", "Energy Err"]]
+    exp_rows = [["Exp", "Geometry (DOF / Sparsity)", "Solver", "Status", "Median (ms)", "Mean±SD (ms)", "Speedup", "Iters", "Rel. Res.", "Mem(MB)", "T_max(°C)", "ΔT_LU(°C)", "Energy Err"]]
     for e in bench_3x3["nine_experiments"]:
         g_short = e["geometry_name"].split("(")[0].strip()
+        med_ms = e.get("median_runtime_ms", e["execution_time_ms"])
+        mean_ms = e.get("mean_runtime_ms", med_ms)
+        std_ms = e.get("std_runtime_ms", 0.0)
+        spd = e.get("speedup_vs_lu_median", 1.0)
         exp_rows.append([
             e["experiment_id"],
             f"{g_short}\n({e['dof']} / {e['sparsity_pct']}%)",
             e["solver_id"].upper(),
             e["status_label"],
-            f"{e['execution_time_ms']:.1f}",
+            f"{med_ms:.2f}",
+            f"{mean_ms:.1f}±{std_ms:.1f}",
+            f"{spd:.2f}×",
             str(e["iterations"]),
-            f"{e['final_residual']:.2e}",
+            f"{e['final_residual']:.1e}",
             f"{e['memory_mb']:.2f}",
             f"{e['t_max']:.2f}",
-            f"{e['max_discrepancy_vs_lu']:.2e}",
+            f"{e['max_discrepancy_vs_lu']:.1e}",
             e["energy_balance_error_formatted"]
         ])
-    e_table = Table(exp_rows, colWidths=[34, 98, 58, 52, 40, 30, 50, 38, 42, 48, 46])
+    e_table = Table(exp_rows, colWidths=[28, 86, 46, 46, 36, 46, 32, 24, 40, 34, 36, 40, 42])
     e_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0F172A')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 6.8),
+        ('FONTSIZE', (0, 0), (-1, -1), 6.2),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')]),
         ('ALIGN', (2, 0), (-1, -1), 'CENTER'),
@@ -575,23 +614,18 @@ def generate_comprehensive_engineering_pdf(output_filepath: str) -> str:
     story.append(Image(fig2, width=6.7*inch, height=2.35*inch))
     story.append(Spacer(1, 8))
 
-    # ================= 4. MESH REFINEMENT & SCALING =================
-    story.append(Paragraph("4. Mesh Refinement & Computational Complexity Scaling", h1_style))
+    # ================= 4. THREE-LEVEL MESH REFINEMENT & PARAMETRIC PARETO OPTIMIZATION =================
+    story.append(Paragraph("4. Three-Level Spatial Grid Convergence (Coarse, Medium, Fine) & Pareto Optimization", h1_style))
     mesh_table_data = [
-        ["Discretization Level", "Active Elements", "DOF", "T_max (°C)", "T_avg (°C)", "Direct LU (ms)", "PCG (ms)", "SOR ω=1.9 (ms)", "Energy Balance Err"],
-        [
-            mesh_study_data[0]["res"], str(mesh_study_data[0]["elems"]), str(mesh_study_data[0]["dof"]),
-            f"{mesh_study_data[0]['t_max']:.2f}", f"{mesh_study_data[0]['t_avg']:.2f}",
-            f"{mesh_study_data[0]['lu_time']:.1f}", f"{mesh_study_data[0]['cg_time']:.1f}",
-            f"{mesh_study_data[0]['sor_time']:.1f}", f"{mesh_study_data[0]['eb_err']*100:.2e}%"
-        ],
-        [
-            mesh_study_data[1]["res"], str(mesh_study_data[1]["elems"]), str(mesh_study_data[1]["dof"]),
-            f"{mesh_study_data[1]['t_max']:.2f}", f"{mesh_study_data[1]['t_avg']:.2f}",
-            f"{mesh_study_data[1]['lu_time']:.1f}", f"{mesh_study_data[1]['cg_time']:.1f}",
-            f"{mesh_study_data[1]['sor_time']:.1f}", f"{mesh_study_data[1]['eb_err']*100:.2e}%"
-        ]
+        ["Discretization Level", "Active Elements", "DOF", "T_max (°C)", "T_avg (°C)", "Direct LU (ms)", "PCG (ms)", "SOR ω=1.9 (ms)", "Energy Balance Err"]
     ]
+    for m_row in mesh_study_data:
+        mesh_table_data.append([
+            m_row["res"], str(m_row["elems"]), str(m_row["dof"]),
+            f"{m_row['t_max']:.2f}", f"{m_row['t_avg']:.2f}",
+            f"{m_row['lu_time']:.1f}", f"{m_row['cg_time']:.1f}",
+            f"{m_row['sor_time']:.1f}", f"{m_row['eb_err']*100:.2e}%"
+        ])
     m_table = Table(mesh_table_data, colWidths=[82, 56, 42, 48, 48, 58, 52, 62, 68])
     m_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E293B')),
@@ -604,8 +638,31 @@ def generate_comprehensive_engineering_pdf(output_filepath: str) -> str:
     ]))
     story.append(m_table)
     story.append(Spacer(1, 6))
-    story.append(Paragraph("<b>Figure 4:</b> Solver Wall-Clock Scaling with Increasing Degrees of Freedom", h2_style))
-    story.append(Image(fig3, width=6.4*inch, height=2.6*inch))
+    story.append(Paragraph("<b>Figure 4:</b> Solver Wall-Clock Scaling with Increasing Degrees of Freedom (Coarse → Medium → Fine)", h2_style))
+    story.append(Image(fig3, width=6.4*inch, height=2.5*inch))
+    story.append(Spacer(1, 6))
+
+    story.append(Paragraph("Multi-Objective Parametric Design Optimization & Non-Dominated Pareto Frontier", h2_style))
+    opt_rows = [["Fin Count", "DOF", "T_max (°C)", "T_avg (°C)", "Thermal Res R_th (K/W)", "Conductance G_th (W/K)", "Volume (cm³)", "Mass (g)", "Pareto Optimal"]]
+    for o_pt in opt_study["results"]:
+        opt_rows.append([
+            str(o_pt["param_value"]), str(o_pt["dof"]),
+            f"{o_pt['t_max']:.2f}", f"{o_pt['t_avg']:.2f}",
+            f"{o_pt['thermal_resistance_k_per_w']:.4f}", f"{o_pt['cooling_conductance_w_per_k']:.3f}",
+            f"{o_pt['material_volume_cm3']:.2f}", f"{o_pt['mass_grams']:.1f}",
+            "YES (Pareto)" if o_pt["is_pareto_optimal"] else "Dominated"
+        ])
+    o_table = Table(opt_rows, colWidths=[46, 38, 48, 48, 76, 76, 56, 48, 70])
+    o_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0F172A')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7.2),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')]),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+    ]))
+    story.append(o_table)
     story.append(PageBreak())
 
     # ================= 5. RESEARCH CONCLUSIONS & ENGINEERING INTERPRETATION =================
@@ -645,6 +702,18 @@ def generate_comprehensive_engineering_pdf(output_filepath: str) -> str:
         f"<b>Preconditioned Conjugate Gradient</b> is the recommended primary solver for 3D conduction meshes, with <b>Direct Sparse LU</b> "
         f"serving as the exact reference verifier for moderate DOFs.",
         callout_style
+    ))
+
+    story.append(Paragraph("Limitations & Future Research Scope", h2_style))
+    story.append(Paragraph(
+        "• <b>Model Limitations:</b> The current physics engine assumes linear steady-state conduction with temperature-independent "
+        "isotropic thermal conductivity k and a uniform effective convection coefficient h over exposed surfaces (neglecting full "
+        "Navier-Stokes conjugate CFD boundary-layer development and radiative heat transfer). Structured orthogonal hexahedral voxels "
+        "approximate curved fillets via stair-stepped boundaries.<br/>"
+        "• <b>Future Scope:</b> Extending the solver benchmark to transient heat conduction (Crank-Nicolson / Backward Euler time stepping), "
+        "Incomplete Cholesky (IC(0)) and Algebraic Multigrid (AMG) preconditioning for >10⁶ DOFs, and temperature-dependent orthotropic "
+        "composites.",
+        body_style
     ))
 
     story.append(Paragraph("References", h2_style))

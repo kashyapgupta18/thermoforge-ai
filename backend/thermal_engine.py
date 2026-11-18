@@ -134,14 +134,18 @@ def build_complex_heat_sink_geometry(
     fin_count: int = 7,
     fin_height_ratio: float = 0.65,
     base_thickness_ratio: float = 0.35,
-    resolution: str = "medium"
+    resolution: str = "medium",
+    fin_thickness_ratio: float = 1.0,
+    fin_spacing_ratio: float = 1.0
 ) -> HexahedralMesh:
     """
     Constructs complex 3D heat sink geometry with:
-    - Stepped base plate
-    - Multiple vertical cooling fins with unequal or variable spacing
+    - Stepped base plate (scaled by base_thickness_ratio)
+    - Multiple vertical cooling fins (scaled by fin_count, fin_height_ratio, fin_thickness_ratio, fin_spacing_ratio)
     - Perforations / ventilation cutouts
     - Central heat-generating component (die)
+    At nominal defaults (fin_height_ratio=0.65, base_thickness_ratio=0.35, fin_thickness_ratio=1.0, fin_spacing_ratio=1.0),
+    dimensions are 80mm x 60mm x 40mm. Modifying any parameter genuinely alters the 3D computational mesh and matrix K.
     """
     res_map = {
         "coarse": (16, 12, 10),
@@ -150,20 +154,24 @@ def build_complex_heat_sink_geometry(
     }
     nx, ny, nz = res_map.get(resolution, (24, 18, 14))
 
-    # Dimensions in meters: 80mm x 60mm x 40mm
-    mesh = HexahedralMesh(nx=nx, ny=ny, nz=nz, lx=0.08, ly=0.06, lz=0.04)
+    total_z_ratio = max(0.25, float(base_thickness_ratio) + float(fin_height_ratio))
+    lx = 0.08 * max(0.5, float(fin_spacing_ratio)) * (0.85 + 0.15 * float(fin_thickness_ratio))
+    ly = 0.06
+    lz = 0.04 * total_z_ratio
 
-    # Base height in element index
-    k_base = int(round(nz * base_thickness_ratio))
+    mesh = HexahedralMesh(nx=nx, ny=ny, nz=nz, lx=lx, ly=ly, lz=lz)
+
+    # Base height in element index proportional to base_thickness_ratio / total_z_ratio
+    rel_base = float(base_thickness_ratio) / total_z_ratio
+    k_base = int(round(nz * rel_base))
     k_base = max(2, min(nz - 2, k_base))
+    fin_span_elems = max(1, int(round((nz - k_base) * min(1.0, float(fin_height_ratio) / 0.65))))
 
     # Stepped base configuration: center base is thicker, sides are stepped
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
-                # By default everything is empty above base
                 if k < k_base:
-                    # Stepped base cutout on outer edges:
                     if (i < 2 or i >= nx - 2) and k >= k_base - 1:
                         mesh.active_elements[i, j, k] = False
                     else:
@@ -172,54 +180,45 @@ def build_complex_heat_sink_geometry(
                     mesh.active_elements[i, j, k] = False
 
     if preset == "cube":
-        # Pure solid block for baseline analytical verification
         mesh.active_elements[:, :, :] = True
-        # Heat source at bottom center
         cx, cy = nx // 2, ny // 2
         mesh.heat_source_elements[cx-1:cx+2, cy-1:cy+2, 0:2] = True
         return mesh
 
     elif preset == "standard_heat_sink":
-        # Simple uniform fins
         fin_pitch = nx / fin_count
-        fin_width_elems = max(1, int(round(nx / (fin_count * 2.5))))
+        base_w = max(1, int(round((nx / (fin_count * 2.5)) * float(fin_thickness_ratio))))
+        k_end = min(nz, k_base + fin_span_elems)
         for f in range(fin_count):
             fin_center = int(round((f + 0.5) * fin_pitch))
-            x_start = max(0, fin_center - fin_width_elems // 2)
-            x_end = min(nx, x_start + fin_width_elems)
-            mesh.active_elements[x_start:x_end, :, k_base:nz] = True
+            x_start = max(0, fin_center - base_w // 2)
+            x_end = min(nx, x_start + base_w)
+            mesh.active_elements[x_start:x_end, :, k_base:k_end] = True
 
     elif preset == "asymmetric_cooling_plate":
-        # Unequal fin distribution, thick cold plate on one side, heat pipe channel
+        k_end = min(nz, k_base + fin_span_elems)
         for i in range(nx):
-            # Gradual variation
             fin_active = (i % 3 != 0) if i < nx // 2 else (i % 4 == 0)
             if fin_active:
-                mesh.active_elements[i, :, k_base:nz] = True
-        # Asymmetric base cutout
+                mesh.active_elements[i, :, k_base:k_end] = True
         mesh.active_elements[0:nx//3, 0:ny//3, :k_base//2] = False
 
     else:  # "advanced_heat_sink" - Primary default complex model
-        # Variable fin thickness and unequal spacing
-        # Fins run along Y direction, spaced along X direction
-        fin_centers = np.linspace(1, nx - 2, fin_count).astype(int)
+        margin = 1 if fin_spacing_ratio >= 0.95 else 2
+        fin_centers = np.linspace(margin, nx - 1 - margin, fin_count).astype(int)
         for idx, fc in enumerate(fin_centers):
-            # Center fins are slightly thicker, outer fins thinner
-            thickness = 2 if (idx == fin_count // 2 or idx == fin_count // 2 - 1) else 1
+            base_thick = 2 if (idx == fin_count // 2 or idx == fin_count // 2 - 1) else 1
+            thickness = max(1, int(round(base_thick * float(fin_thickness_ratio))))
             x_min = max(0, fc - thickness // 2)
             x_max = min(nx, x_min + thickness)
 
-            # Fin height variation: taller in center, tapered towards edges
-            rel_height = 0.75 + 0.25 * np.cos(np.pi * (idx - fin_count / 2) / fin_count)
-            k_top = k_base + int(round((nz - k_base) * rel_height))
+            rel_height = (0.75 + 0.25 * np.cos(np.pi * (idx - fin_count / 2) / fin_count)) * min(1.15, float(fin_height_ratio) / 0.65)
+            k_top = k_base + int(round((nz - k_base) * min(1.0, rel_height)))
             k_top = min(nz, max(k_base + 1, k_top))
 
             for x_i in range(x_min, x_max):
                 for y_j in range(ny):
-                    # Ventilation / perforations: add window holes through fins
-                    is_perforation = (y_j in [ny // 3, 2 * ny // 3]) and (nz // 2 <= k_base + 2)
                     for z_k in range(k_base, k_top):
-                        # Add ventilation cutouts in the middle of fins
                         if (y_j >= ny // 3 and y_j <= ny // 3 + 1) and (z_k == (k_base + k_top) // 2):
                             mesh.active_elements[x_i, y_j, z_k] = False
                         else:
@@ -779,11 +778,38 @@ def build_engineering_conclusions(mesh_info: Dict[str, Any], s: Dict[str, Dict[s
     return {"recommended_solver": rec, "notes": notes}
 
 
+def _attach_runtime_statistics(stats: Dict[str, Any], trial_times: List[float], lu_median_ms: Optional[float] = None) -> None:
+    arr = np.array(trial_times, dtype=float)
+    median_ms = float(np.median(arr))
+    mean_ms = float(np.mean(arr))
+    std_ms = float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0
+    min_ms = float(np.min(arr))
+    max_ms = float(np.max(arr))
+    stats["repetitions"] = int(len(arr))
+    stats["trial_runtimes_ms"] = [round(float(x), 3) for x in trial_times]
+    stats["single_run_time_ms"] = round(float(trial_times[0]), 3)
+    stats["mean_runtime_ms"] = round(mean_ms, 3)
+    stats["median_runtime_ms"] = round(median_ms, 3)
+    stats["std_runtime_ms"] = round(std_ms, 3)
+    stats["min_runtime_ms"] = round(min_ms, 3)
+    stats["max_runtime_ms"] = round(max_ms, 3)
+    # Primary comparison metric is median runtime (robust to timing outliers)
+    stats["execution_time_ms"] = median_ms
+    if lu_median_ms is not None and median_ms > 0:
+        stats["speedup_vs_lu_median"] = round(float(lu_median_ms / median_ms), 3)
+
+
 def run_solver_battle(mesh: HexahedralMesh, conductivity: float = 167.0, ambient_temp: float = 293.15,
                       heat_power_watts: float = 65.0, convection_h: float = 45.0, sor_omega: float = 1.9,
-                      tol: float = TOL_REL, max_iter: int = 1500, initial_guess: str = "lumped"
+                      tol: float = TOL_REL, max_iter: int = 1500, initial_guess: str = "lumped",
+                      repetitions: int = 1
                       ) -> Dict[str, Any]:
-    """Assemble K, F ONCE; pass the identical (K, F, T0) to all three solvers."""
+    """
+    Assemble K, F ONCE; pass the identical (K, F, T0) to all three solvers.
+    When repetitions > 1, executes each solver `repetitions` independent times to record
+    mean, median, std dev, min, max runtimes and speedup vs Direct LU median.
+    """
+    reps = max(1, int(repetitions))
     asm = ThermalSystemAssembler(mesh=mesh, conductivity=conductivity, ambient_temp=ambient_temp,
                                  heat_power_watts=heat_power_watts, convection_h=convection_h)
     t_a = time.perf_counter()
@@ -795,22 +821,47 @@ def run_solver_battle(mesh: HexahedralMesh, conductivity: float = 167.0, ambient
     else:
         T0, t0_val = np.full(F.shape[0], ambient_temp), ambient_temp
 
-    T_lu, s_lu = solve_direct_sparse_lu(K, F)
-    T_cg, s_cg = solve_conjugate_gradient(K, F, tol=tol, max_iter=max_iter, T0=T0)
-    T_sor, s_sor = solve_successive_over_relaxation(K, F, omega=sor_omega, tol=tol, max_iter=max_iter, T0=T0)
+    lu_times, cg_times, sor_times = [], [], []
+    T_lu, s_lu = None, None
+    T_cg, s_cg = None, None
+    T_sor, s_sor = None, None
+
+    for _ in range(reps):
+        T_lu, s_lu = solve_direct_sparse_lu(K, F)
+        lu_times.append(s_lu["execution_time_ms"])
+
+        T_cg, s_cg = solve_conjugate_gradient(K, F, tol=tol, max_iter=max_iter, T0=T0)
+        cg_times.append(s_cg["execution_time_ms"])
+
+        T_sor, s_sor = solve_successive_over_relaxation(K, F, omega=sor_omega, tol=tol, max_iter=max_iter, T0=T0)
+        sor_times.append(s_sor["execution_time_ms"])
+
+    lu_med = float(np.median(lu_times))
+    _attach_runtime_statistics(s_lu, lu_times, lu_med)
+    _attach_runtime_statistics(s_cg, cg_times, lu_med)
+    _attach_runtime_statistics(s_sor, sor_times, lu_med)
 
     ref = T_lu if s_lu["converged"] else None
     for T, s in ((T_lu, s_lu), (T_cg, s_cg), (T_sor, s_sor)):
         s.update(_field_stats(T, ref))
         s["energy_balance"] = compute_energy_balance(mesh, T, active, heat_power_watts, convection_h, ambient_temp)
     s_lu["max_discrepancy_vs_lu"] = 0.0
+    s_lu["relative_l2_error_vs_lu"] = 0.0
+    s_lu["rms_discrepancy_vs_lu"] = 0.0
 
     dof = len(active)
-    mesh_info = {"nx": mesh.nx, "ny": mesh.ny, "nz": mesh.nz,
-                 "active_elements": int(np.sum(mesh.active_elements)), "active_nodes": dof,
-                 "degrees_of_freedom": dof, "matrix_nonzeros": int(K.nnz),
-                 "sparsity_pct": 100.0 * (1.0 - K.nnz / float(dof * dof)),
-                 "assembly_time_ms": assembly_ms, "matrix_checks": check_matrix(K)}
+    active_elems = int(np.sum(mesh.active_elements))
+    solid_vol_m3 = float(active_elems * mesh.dx * mesh.dy * mesh.dz)
+    mesh_info = {
+        "nx": mesh.nx, "ny": mesh.ny, "nz": mesh.nz,
+        "lx_m": round(mesh.lx, 5), "ly_m": round(mesh.ly, 5), "lz_m": round(mesh.lz, 5),
+        "active_elements": active_elems, "active_nodes": dof,
+        "degrees_of_freedom": dof, "matrix_nonzeros": int(K.nnz),
+        "sparsity_pct": 100.0 * (1.0 - K.nnz / float(dof * dof)),
+        "solid_volume_m3": solid_vol_m3,
+        "solid_volume_cm3": round(solid_vol_m3 * 1e6, 3),
+        "assembly_time_ms": assembly_ms, "matrix_checks": check_matrix(K)
+    }
     solvers = {"direct_lu": s_lu, "conjugate_gradient": s_cg, "sor": s_sor}
     concl = build_engineering_conclusions(mesh_info, solvers)
 
@@ -821,10 +872,14 @@ def run_solver_battle(mesh: HexahedralMesh, conductivity: float = 167.0, ambient
 
     return {
         "mesh_info": mesh_info,
-        "solver_settings": {"tolerance_rel": tol, "max_iterations": max_iter, "sor_omega": sor_omega,
-                            "initial_guess": initial_guess, "initial_guess_kelvin": t0_val,
-                            "residual_definition": "||F - K T||_2 / ||F||_2",
-                            "history_sampling": "every iteration (not downsampled)"},
+        "solver_settings": {
+            "tolerance_rel": tol, "max_iterations": max_iter, "sor_omega": sor_omega,
+            "initial_guess": initial_guess, "initial_guess_kelvin": t0_val,
+            "repetitions": reps,
+            "primary_timing_metric": "median_runtime_ms" if reps > 1 else "single_run_time_ms",
+            "residual_definition": "||F - K T||_2 / ||F||_2",
+            "history_sampling": "every iteration (not downsampled)"
+        },
         "solvers": solvers,
         "winner_id": concl["recommended_solver"],
         "winner_explanation": "\n".join(concl["notes"]),
