@@ -20,20 +20,22 @@ try:
         HexahedralMesh,
         build_complex_heat_sink_geometry,
         ThermalSystemAssembler,
+        lumped_initial_guess,
         solve_direct_sparse_lu,
         solve_conjugate_gradient,
         solve_successive_over_relaxation,
-        verify_1d_analytical_benchmark
+        verify_3d_analytical_benchmark
     )
 except ImportError:
     from thermal_engine import (
         HexahedralMesh,
         build_complex_heat_sink_geometry,
         ThermalSystemAssembler,
+        lumped_initial_guess,
         solve_direct_sparse_lu,
         solve_conjugate_gradient,
         solve_successive_over_relaxation,
-        verify_1d_analytical_benchmark
+        verify_3d_analytical_benchmark
     )
 
 def run_deep_validation():
@@ -42,10 +44,11 @@ def run_deep_validation():
     print("=" * 80)
 
     # 1. ANALYTICAL BENCHMARK
-    print("\n[STEP 1] Running Analytical Closed-Form 1D Benchmark...")
-    bench = verify_1d_analytical_benchmark()
+    print("\n[STEP 1] Running Analytical Closed-Form 3D Bar Refinement Benchmark...")
+    bench = verify_3d_analytical_benchmark()
     print(f"  • Status: {bench['status']}")
-    print(f"  • Max Absolute Error: {bench['max_absolute_error_kelvin']:.4e} Kelvin")
+    print(f"  • Observed L2 Order of Accuracy p: {bench['observed_order']:.4f} (Expected: 2.0000)")
+    print(f"  • Nodal Superconvergence Error: {bench['max_absolute_error_kelvin']:.4e} Kelvin")
     assert bench['status'] == "PASS", "Analytical test failed!"
 
     # 2. 3D SYSTEM ASSEMBLY ON COMPLEX FINNED HEAT SINK
@@ -113,51 +116,59 @@ def run_deep_validation():
     print(f"  • Temperature Range: [{np.min(t_lu_c):.2f}°C, {np.max(t_lu_c):.2f}°C], Mean: {np.mean(t_lu_c):.2f}°C")
 
     # 5. SOLVER B — CONJUGATE GRADIENT
-    print("\n[STEP 5] Executing Solver B: Preconditioned Conjugate Gradient (PCG)...")
+    T0_lumped, t0_val = lumped_initial_guess(K, F, 293.15)
+    print(f"\n[STEP 5] Executing Solver B: Preconditioned Conjugate Gradient (PCG, Lumped T0={t0_val-273.15:.2f}°C)...")
     t0_cg = time.perf_counter()
-    T_cg, stats_cg = solve_conjugate_gradient(K, F, tol=1e-6, max_iter=1500)
+    T_cg, stats_cg = solve_conjugate_gradient(K, F, tol=1e-6, max_iter=1500, T0=T0_lumped)
     t_cg = (time.perf_counter() - t0_cg) * 1000.0
 
     true_res_cg = np.linalg.norm(K.dot(T_cg) - F) / norm_F
     t_cg_c = T_cg - 273.15
     discrepancy_cg = np.max(np.abs(t_cg_c - t_lu_c))
     print(f"  • Wall-Clock Time: {t_cg:.2f} ms")
-    print(f"  • Iterations to Convergence: {stats_cg['iterations']}")
-    print(f"  • Converged: {stats_cg['converged']}")
+    print(f"  • Iterations to Convergence: {stats_cg['iterations']} ({stats_cg['status_label']})")
     print(f"  • Verified Relative Residual ||K·T - F|| / ||F||: {true_res_cg:.4e}")
     print(f"  • Temperature Range: [{np.min(t_cg_c):.2f}°C, {np.max(t_cg_c):.2f}°C], Mean: {np.mean(t_cg_c):.2f}°C")
     print(f"  • Max Discrepancy vs Direct LU Baseline: {discrepancy_cg:.6f}°C")
 
-    # 6. SOLVER C — SUCCESSIVE OVER-RELAXATION (SOR)
-    print("\n[STEP 6] Executing Solver C: Successive Over-Relaxation (SOR, ω=1.35)...")
+    # 6. SOLVER C — SUCCESSIVE OVER-RELAXATION (CONVERGED ω=1.90 vs UNCONVERGED ω=1.35)
+    print("\n[STEP 6A] Executing Solver C: SOR (ω=1.90, Lumped T0) — Converged Regime...")
     t0_sor = time.perf_counter()
-    T_sor, stats_sor = solve_successive_over_relaxation(K, F, omega=1.35, tol=1e-5, max_iter=800)
+    T_sor, stats_sor = solve_successive_over_relaxation(K, F, omega=1.90, tol=1e-6, max_iter=1500, T0=T0_lumped)
     t_sor = (time.perf_counter() - t0_sor) * 1000.0
 
     true_res_sor = np.linalg.norm(K.dot(T_sor) - F) / norm_F
     t_sor_c = T_sor - 273.15
     discrepancy_sor = np.max(np.abs(t_sor_c - t_lu_c))
     print(f"  • Wall-Clock Time: {t_sor:.2f} ms")
-    print(f"  • Iterations Executed: {stats_sor['iterations']}")
+    print(f"  • Iterations Executed: {stats_sor['iterations']} ({stats_sor['status_label']})")
     print(f"  • Verified Relative Residual ||K·T - F|| / ||F||: {true_res_sor:.4e}")
     print(f"  • Temperature Range: [{np.min(t_sor_c):.2f}°C, {np.max(t_sor_c):.2f}°C], Mean: {np.mean(t_sor_c):.2f}°C")
     print(f"  • Max Discrepancy vs Direct LU Baseline: {discrepancy_sor:.6f}°C")
 
+    print("\n[STEP 6B] Executing Solver C: SOR (ω=1.35, Ambient T0) — Honest Unconverged Audit...")
+    T_sor_u, stats_sor_u = solve_successive_over_relaxation(K, F, omega=1.35, tol=1e-6, max_iter=1500, T0=np.full(dof, 293.15))
+    print(f"  • Status Label: {stats_sor_u['status_label']} (Converged={stats_sor_u['converged']})")
+    print(f"  • Residual at 1500 iters: {stats_sor_u['final_residual']:.4e}")
+
     # 7. COMPARATIVE AUDIT SUMMARY
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 96)
     print(" NUMERICAL SOLVER AUDIT SUMMARY TABLE (EXACT SAME ASSEMBLED SYSTEM)")
-    print("=" * 80)
-    print(f"{'Solver Algorithm':<28} | {'Time (ms)':<10} | {'Iters':<6} | {'Residual Norm':<14} | {'T_max (°C)':<10} | {'Max ΔT vs LU':<12}")
-    print("-" * 88)
-    print(f"{'Direct Sparse LU':<28} | {t_lu:<10.2f} | {'1':<6} | {true_res_lu:<14.2e} | {np.max(t_lu_c):<10.2f} | {'0.000000':<12}")
-    print(f"{'Conjugate Gradient (PCG)':<28} | {t_cg:<10.2f} | {stats_cg['iterations']:<6} | {true_res_cg:<14.2e} | {np.max(t_cg_c):<10.2f} | {discrepancy_cg:<12.6f}")
-    print(f"{'SOR (ω=1.35)':<28} | {t_sor:<10.2f} | {stats_sor['iterations']:<6} | {true_res_sor:<14.2e} | {np.max(t_sor_c):<10.2f} | {discrepancy_sor:<12.6f}")
-    print("-" * 88)
+    print("=" * 96)
+    print(f"{'Solver Algorithm':<28} | {'Status':<22} | {'Time(ms)':<8} | {'Iters':<5} | {'Rel Residual':<12} | {'T_max(°C)':<9} | {'Max ΔT(°C)':<10}")
+    print("-" * 106)
+    print(f"{'Direct Sparse LU':<28} | {stats_lu['status_label']:<22} | {t_lu:<8.2f} | {'1':<5} | {true_res_lu:<12.2e} | {np.max(t_lu_c):<9.2f} | {'0.000000':<10}")
+    print(f"{'Conjugate Gradient (PCG)':<28} | {stats_cg['status_label']:<22} | {t_cg:<8.2f} | {stats_cg['iterations']:<5} | {true_res_cg:<12.2e} | {np.max(t_cg_c):<9.2f} | {discrepancy_cg:<10.6f}")
+    print(f"{'SOR (ω=1.90, Lumped T0)':<28} | {stats_sor['status_label']:<22} | {t_sor:<8.2f} | {stats_sor['iterations']:<5} | {true_res_sor:<12.2e} | {np.max(t_sor_c):<9.2f} | {discrepancy_sor:<10.6f}")
+    print(f"{'SOR (ω=1.35, Ambient T0)':<28} | {stats_sor_u['status_label']:<22} | {stats_sor_u['execution_time_ms']:<8.2f} | {stats_sor_u['iterations']:<5} | {stats_sor_u['final_residual']:<12.2e} | {np.max(T_sor_u-273.15):<9.2f} | {np.max(np.abs(T_sor_u-T_lu)):<10.6f}")
+    print("-" * 106)
 
     # Integrity Assertions
     assert true_res_lu < 1e-11, "Direct LU residual is unacceptably high!"
-    assert true_res_cg < 1e-5, "CG did not reach expected tolerance!"
-    assert discrepancy_cg < 0.05, f"CG temperature field deviated excessively from LU ({discrepancy_cg}°C)!"
+    assert true_res_cg <= 1e-6, "CG did not reach expected tolerance!"
+    assert true_res_sor <= 1e-6, "SOR (ω=1.90) did not reach expected tolerance!"
+    assert not stats_sor_u["converged"], "Unconverged SOR (ω=1.35) must not be marked converged!"
+    assert discrepancy_cg < 1e-3 and discrepancy_sor < 1e-3
     print("\n>>> ALL NUMERICAL INTEGRITY CHECKS PASSED SUCCESSFULLY. NO MOCKED DATA DETECTED.")
 
 if __name__ == "__main__":

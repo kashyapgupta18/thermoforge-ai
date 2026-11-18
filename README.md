@@ -76,14 +76,21 @@ The output PDF is saved directly to:
 
 ---
 
-## 📊 Summary of Solver Benchmark Findings
+## 📊 Summary of Audited Solver Benchmark Findings (Complex Perforated Heat Sink, 2,080 DOF)
 
-| Metric | Solver A: Direct Sparse LU | Solver B: Conjugate Gradient (PCG) | Solver C: SOR ($\omega = 1.35$) |
-| :--- | :--- | :--- | :--- |
-| **Algorithm Type** | Direct Sparse Factorization | Krylov Subspace Iteration | Stationary Relaxation |
-| **Iterations** | 1 (Direct Factorization) | 94 iterations | 1500 (Max limit) |
-| **Wall-Time** | ~24.1 ms | **~9.9 ms (Fastest)** | ~2822 ms |
-| **Precision (Residual)** | $5.44 \times 10^{-13}$ (Exact) | $7.98 \times 10^{-7}$ | $4.96 \times 10^{-3}$ |
-| **Peak Temperature ($T_{max}$)**| 74.56 °C | 74.56 °C ($\Delta T < 0.001$ °C) | 72.48 °C |
-| **Peak Memory Footprint** | 3.9 MB (Matrix fill-in) | **0.4 MB ($O(N)$ storage)** | 0.8 MB |
-| **Recommended Regimes** | Small/medium meshes, ill-conditioned matrices | **Production 3D grids, large DOF** | Simple educational models |
+| Metric | Solver A: Direct Sparse LU | Solver B: Conjugate Gradient (PCG) | Solver C1: SOR ($\omega = 1.90$, Lumped $T_0$) | Solver C2: SOR ($\omega = 1.35$, Ambient $T_0$) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Algorithm Type** | Direct Sparse Factorization | Krylov Subspace Iteration | Over-Relaxed Stationary Sweep | Under-Damped Stationary Sweep |
+| **Convergence Status** | **Converged** | **Converged** | **Converged** | **Max Iterations Reached (Unconverged)** |
+| **Iterations** | 1 (Exact factorize) | 88 iterations | 393 iterations | 1,500 iterations (Limit) |
+| **Wall-Time** | ~32.8 ms | **~15.3 ms (Fastest)** | ~731.4 ms | ~2,822 ms |
+| **Relative Residual ($\|r\|_2/\|F\|_2$)** | $5.44 \times 10^{-13}$ | $9.50 \times 10^{-7}$ | $9.88 \times 10^{-7}$ | $4.96 \times 10^{-3}$ (Failed tol $10^{-6}$) |
+| **Peak Temperature ($T_{\max}$)** | 74.56 °C | 74.56 °C | 74.56 °C | 72.48 °C |
+| **Max Discrepancy ($\Delta T$ vs LU)** | 0.000000 °C (Ref) | $8.79 \times 10^{-6}$ °C | $1.02 \times 10^{-4}$ °C | 2.1048 °C |
+| **Global Energy Balance Error** | $3.99 \times 10^{-10}\%$ | $6.09 \times 10^{-8}\%$ | $1.93 \times 10^{-4}\%$ | $19.50\%$ (Conservation violated) |
+| **Working Memory Footprint** | 2.92 MB (Fill-in $6.1\times$) | **0.57 MB ($O(N)$ storage)** | 1.07 MB | 1.07 MB |
+
+### 3D Analytical Benchmark Verification ($N_x \in \{8, 16, 32, 64\}$)
+- **Exact Solution:** $T(x) = T_\infty + \frac{q''' L}{2h} + \frac{q'''}{2k}\left[\left(\frac{L}{2}\right)^2 - \left(x - \frac{L}{2}\right)^2\right]$
+- **Observed $L_2$ Interior Convergence Order:** **$p = 2.0000$** (Theoretical $O(h^2)$)
+- **Nodal Superconvergence Error:** **$3.20 \times 10^{-9}\text{ K}$** (`PASS`)
