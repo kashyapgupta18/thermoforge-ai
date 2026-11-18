@@ -22,8 +22,9 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
+from PIL import Image as PILImage
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.units import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
@@ -655,7 +656,141 @@ def generate_comprehensive_engineering_pdf(output_filepath: str) -> str:
         body_style
     ))
 
+    # ================= 6. INTERACTIVE WEB PLATFORM SCREENSHOT ATLAS =================
+    ss_dir = os.path.join(os.path.dirname(__file__), "report_assets", "website_screenshots")
+    screenshot_items = [
+        ("01_3d_simulation_temperature.png", "Page 1 — 3D Simulation Workspace (Temperature Contour °C Mode)",
+         "Interactive 3D FEM viewport displaying the Complex Perforated Heat Sink temperature distribution [63.53°C – 74.56°C], SOR ω & T₀ controls, Global Energy Balance card (3.99e-10% error), and live 3-solver status cards."),
+        ("02_3d_simulation_heat_flux.png", "Page 2 — 3D Simulation Workspace (Fourier Heat Flux |q| in W/m² Mode)",
+         "3D heat flux vector field and surface colored by actual computed heat flux magnitude |q| = |-k∇T| spanning [1,421 W/m² – 85,862 W/m²] with calibrated HEAT FLUX |q| (W/m²) legend."),
+        ("03_3d_simulation_hotspot_probe.png", "Page 3 — 3D Simulation Workspace (Hotspot Isolation & Exact Nodal Surface Probe)",
+         "Top 20% thermal rise isolation mode with active FEM Surface Probe overlay displaying exact nodal temperature (65.103 °C), heat flux magnitude (4191.4 W/m²), and 3D coordinates."),
+        ("04_3d_simulation_wireframe.png", "Page 4 — 3D Simulation Workspace (FEM Hex-8 Trilinear Wireframe Mode)",
+         "Finite element mesh discretization overlay showing the 1,302 active 8-node trilinear hexahedral brick elements and 1,434 exterior convective boundary quad faces."),
+        ("05_3d_simulation_cross_section.png", "Page 5 — 3D Simulation Workspace (Cross-Sectional Internal Conduction View)",
+         "Real-time clipping plane slicing through the heat sink assembly to expose internal 3D heat spreading from the central bottom die to the vertical fin tips."),
+        ("06_solver_arena_converged_and_omega_sweep.png", "Page 6 — Solver Battle Arena (Converged ω=1.90 & Empirical ω Sweep Audit)",
+         "Automated Engineering Conclusions panel, 3 converged solver cards, unsampled iteration-by-iteration residual trajectory (394 points plotted), and the 8-point SOR relaxation parameter ω ∈ [0.80, 2.05] empirical audit table."),
+        ("07_solver_arena_unconverged_omega_135.png", "Page 7 — Solver Battle Arena (Honest Unconverged SOR ω=1.35 Diagnosis)",
+         "Explicit 'MAXIMUM ITERATIONS REACHED (UNCONVERGED)' status badge for SOR at ω=1.35, showing the 1,500-iteration unsampled residual curve (1,501 points) terminating above the 1e-6 tolerance threshold."),
+        ("08_benchmark_3x3_nine_experiments.png", "Page 8 — 3 × 3 Geometry-Solver Research Benchmark Dashboard (Nine Experiments)",
+         "Complete 9-experiment matrix (EXP-1 to EXP-9) running Direct Sparse LU, Preconditioned CG, and SOR on the exact same assembled (K, F) across (A) Standard, (B) Asymmetric, and (C) Complex Perforated heat sinks."),
+        ("09_verification_and_mesh_laboratory.png", "Page 9 — Numerical Verification & Spatial Grid Convergence Laboratory",
+         "Closed-form 3D analytical bar verification across 4 grid refinement levels (Nx = 8, 16, 32, 64) demonstrating exact second-order L2 convergence (observed p = 2.0000, STATUS: PASS) alongside the 3D heat sink mesh refinement study."),
+        ("10_parametric_optimization_sweep.png", "Page 10 — Parametric Design Optimization Suite",
+         "Multi-point fin density sweep (4 to 12 fins) identifying 8 fins as the minimum junction temperature configuration (73.52 °C, 1.214 W/K cooling efficiency)."),
+        ("11_experiments_repository.png", "Page 11 — Reproducible Experiments Repository",
+         "Persistent experiment management dashboard storing geometry presets, material parameters, boundary conditions, and solver benchmarks."),
+        ("12_thermo_ai_copilot.png", "Page 12 — THERMO AI Thermal Engineering Copilot",
+         "Context-aware engineering copilot answering technical questions using actual computed FEM residuals, iteration counts, and temperature gradients.")
+    ]
+
+    existing_ss = [(os.path.join(ss_dir, fn), title, desc) for fn, title, desc in screenshot_items if os.path.exists(os.path.join(ss_dir, fn))]
+    if existing_ss:
+        story.append(PageBreak())
+        story.append(Paragraph("6. Interactive Web Platform Visual Atlas (All Website Pages & 3D Modes)", h1_style))
+        story.append(Paragraph(
+            "The following high-resolution captures document every interactive page, 3D visualization mode, and numerical benchmark "
+            "dashboard of the deployed THERMOFORGE AI web application.",
+            body_style
+        ))
+        max_w = 6.8 * inch
+        for idx, (img_path, title, desc) in enumerate(existing_ss):
+            with PILImage.open(img_path) as im:
+                iw, ih = im.size
+            aspect = ih / float(iw)
+            max_h = 4.4 * inch if aspect < 0.85 else 7.6 * inch
+            draw_w = max_w
+            draw_h = draw_w * aspect
+            if draw_h > max_h:
+                draw_h = max_h
+                draw_w = draw_h / aspect
+            block = [
+                Paragraph(f"<b>{title}</b>", h2_style),
+                Paragraph(desc, body_style),
+                Image(img_path, width=draw_w, height=draw_h),
+                Spacer(1, 10)
+            ]
+            story.append(KeepTogether(block))
+
     doc.build(story, canvasmaker=NumberedCanvas)
+    return output_filepath
+
+
+def generate_website_screenshots_pdf(output_filepath: str) -> str:
+    """
+    Generates a dedicated high-resolution landscape PDF containing all 12 website page screenshots
+    (one full-page visual per sheet with title and engineering caption).
+    """
+    ss_dir = os.path.join(os.path.dirname(__file__), "report_assets", "website_screenshots")
+    screenshot_items = [
+        ("01_3d_simulation_temperature.png", "1. 3D Simulation Workspace — Temperature Contour (°C) Mode",
+         "Complex Perforated Heat Sink (2,080 DOF, Aluminium 6061-T6, 65 W die, h=45 W/m²K): T_min = 63.53°C, T_max = 74.56°C, Global Energy Balance Error = 3.99e-10%."),
+        ("02_3d_simulation_heat_flux.png", "2. 3D Simulation Workspace — Fourier Heat Flux |q| = |-k∇T| (W/m²) Mode",
+         "3D heat flux vector arrows and surface colored by actual computed heat flux magnitude in W/m² [1,421 W/m² – 85,862 W/m²] with dedicated HEAT FLUX |q| (W/m²) legend."),
+        ("03_3d_simulation_hotspot_probe.png", "3. 3D Simulation Workspace — Hotspot Isolation & Exact FEM Nodal Surface Probe",
+         "Top 20% thermal rise isolation (> 72.35°C) with active raycasted FEM Surface Probe displaying exact nodal temperature (65.103 °C) and heat flux (4191.4 W/m²)."),
+        ("04_3d_simulation_wireframe.png", "4. 3D Simulation Workspace — FEM Hex-8 Trilinear Mesh Wireframe Mode",
+         "Discretization view showing 1,302 active 8-node trilinear hexahedral elements and 1,434 exterior convective boundary quad faces."),
+        ("05_3d_simulation_cross_section.png", "5. 3D Simulation Workspace — Cross-Sectional Internal Conduction Analysis",
+         "Cross-sectional clipping plane revealing internal 3D heat conduction gradients from the bottom silicon die to the stepped base and vertical fins."),
+        ("06_solver_arena_converged_and_omega_sweep.png", "6. Solver Battle Arena — Converged Benchmark & SOR Relaxation Factor (ω) Empirical Sweep",
+         "Automated Engineering Conclusions, 3 Solver Audit Cards, Unsampled Residual Trajectory (394 points), and 8-point SOR ω ∈ [0.80, 2.05] empirical audit table."),
+        ("07_solver_arena_unconverged_omega_135.png", "7. Solver Battle Arena — Honest Unconverged SOR (ω=1.35) Failure Detection",
+         "Explicit 'MAXIMUM ITERATIONS REACHED (UNCONVERGED)' status badge for SOR at ω=1.35 with full 1,501-point unsampled residual trajectory terminating above tolerance."),
+        ("08_benchmark_3x3_nine_experiments.png", "8. 3 × 3 Geometry-Solver Research Benchmark Dashboard (Nine Experiments)",
+         "Complete 9-experiment matrix (EXP-1 to EXP-9) comparing Direct Sparse LU, Preconditioned CG, and SOR across (A) Standard, (B) Asymmetric, and (C) Complex Perforated heat sinks."),
+        ("09_verification_and_mesh_laboratory.png", "9. Numerical Verification & Spatial Grid Convergence Laboratory",
+         "3D Analytical Bar Benchmark across 4 grid levels (Nx = 8, 16, 32, 64) confirming observed L2 order p = 2.0000 (STATUS: PASS) alongside the 3D heat sink mesh refinement study."),
+        ("10_parametric_optimization_sweep.png", "10. Parametric Design Optimization Suite",
+         "Multi-point fin count sweep (4, 6, 8, 10, 12 fins) identifying 8 fins as optimal for minimizing peak junction temperature (73.52°C, 1.214 W/K)."),
+        ("11_experiments_repository.png", "11. Reproducible Experiments Repository",
+         "Saved simulation runs recording geometry preset, material properties, boundary conditions, peak temperature, and solver runtime."),
+        ("12_thermo_ai_copilot.png", "12. THERMO AI — Context-Aware Thermal Engineering Copilot",
+         "Interactive engineering Q&A grounded in actual computed FEM residuals, Krylov subspace convergence metrics, and thermal gradients.")
+    ]
+
+    doc = SimpleDocTemplate(
+        output_filepath,
+        pagesize=landscape(letter),
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
+    styles = getSampleStyleSheet()
+    h_style = ParagraphStyle(
+        'SSHead', parent=styles['Normal'], fontName='Helvetica-Bold',
+        fontSize=13, leading=16, textColor=colors.HexColor('#0F172A'), spaceAfter=3
+    )
+    p_style = ParagraphStyle(
+        'SSDesc', parent=styles['Normal'], fontName='Helvetica',
+        fontSize=9, leading=12, textColor=colors.HexColor('#334155'), spaceAfter=6
+    )
+
+    story = []
+    max_w = 10.0 * inch
+    max_h = 6.45 * inch
+
+    for idx, (fn, title, desc) in enumerate(screenshot_items):
+        img_path = os.path.join(ss_dir, fn)
+        if not os.path.exists(img_path):
+            continue
+        if idx > 0:
+            story.append(PageBreak())
+        with PILImage.open(img_path) as im:
+            iw, ih = im.size
+        aspect = ih / float(iw)
+        draw_w = max_w
+        draw_h = draw_w * aspect
+        if draw_h > max_h:
+            draw_h = max_h
+            draw_w = draw_h / aspect
+        story.append(Paragraph(f"THERMOFORGE AI — {title}", h_style))
+        story.append(Paragraph(desc, p_style))
+        story.append(Image(img_path, width=draw_w, height=draw_h))
+
+    doc.build(story)
     return output_filepath
 
 
@@ -663,4 +798,7 @@ if __name__ == "__main__":
     out_pdf = os.path.join(os.path.dirname(__file__), "THERMOFORGE_AI_Technical_Report.pdf")
     print(f"Generating comprehensive PDF report at: {out_pdf} ...")
     generate_comprehensive_engineering_pdf(out_pdf)
+    ss_pdf = os.path.join(os.path.dirname(os.path.dirname(__file__)), "THERMOFORGE_AI_Website_Screenshots.pdf")
+    print(f"Generating dedicated website screenshots PDF at: {ss_pdf} ...")
+    generate_website_screenshots_pdf(ss_pdf)
     print("PDF Report generation complete!")
