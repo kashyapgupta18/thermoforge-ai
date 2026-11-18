@@ -12,9 +12,16 @@ interface Viewport3DProps {
     positions: number[];
     normals: number[];
     temperatures: number[];
+    heat_fluxes?: number[];
     wireframe_lines: number[];
+    num_triangles?: number;
     heat_source_centroids?: number[][];
     heat_flux_vectors?: HeatFluxVector[];
+    heat_flux_range?: {
+      q_min_w_m2: number;
+      q_max_w_m2: number;
+      q_avg_w_m2?: number;
+    };
     hotspot?: {
       coordinate: number[];
       peak_temperature: number;
@@ -44,11 +51,20 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
   const probeMarkerRef = useRef<THREE.Mesh | null>(null);
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2());
+  const surfaceMeshRef = useRef(surfaceMesh);
+  surfaceMeshRef.current = surfaceMesh;
 
-  const [probedData, setProbedData] = useState<{ temp: number; x: number; y: number; z: number } | null>(null);
+  const [probedData, setProbedData] = useState<{
+    temp: number;
+    flux: number | null;
+    x: number;
+    y: number;
+    z: number;
+  } | null>(null);
   const [cameraPreset, setCameraPreset] = useState<string>('iso');
+  const [tempFilterPct, setTempFilterPct] = useState<number>(0);
 
-  // Colormap mapping (Blue -> Cyan -> Green -> Yellow -> Red)
+  // Colormap for Temperature (°C): Blue -> Cyan -> Green -> Yellow -> Red
   const getTemperatureColor = (val: number, min: number, max: number): THREE.Color => {
     const t = Math.max(0, Math.min(1, (val - min) / (max - min || 1e-6)));
     let r = 0, g = 0, b = 0;
@@ -72,23 +88,35 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     return new THREE.Color(r, g, b);
   };
 
+  // Colormap for Heat Flux Magnitude |q| = |-k ∇T| (W/m²): Deep Indigo -> Teal -> Cyan -> Amber/White
+  const getHeatFluxColor = (val: number, min: number, max: number): THREE.Color => {
+    const t = Math.max(0, Math.min(1, (val - min) / (max - min || 1e-6)));
+    if (t < 0.35) {
+      const s = t / 0.35;
+      return new THREE.Color(0.06 * (1 - s) + 0.05 * s, 0.09 * (1 - s) + 0.55 * s, 0.20 * (1 - s) + 0.65 * s);
+    } else if (t < 0.75) {
+      const s = (t - 0.35) / 0.40;
+      return new THREE.Color(0.05 * (1 - s) + 0.15 * s, 0.55 * (1 - s) + 0.85 * s, 0.65 * (1 - s) + 0.95 * s);
+    } else {
+      const s = (t - 0.75) / 0.25;
+      return new THREE.Color(0.15 * (1 - s) + 1.0 * s, 0.85 * (1 - s) + 0.95 * s, 0.95 * (1 - s) + 0.55 * s);
+    }
+  };
+
   useEffect(() => {
     if (!containerRef.current) return;
     const width = containerRef.current.clientWidth;
     const height = containerRef.current.clientHeight;
 
-    // 1. Scene Setup
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0e131f);
     sceneRef.current = scene;
 
-    // 2. Camera Setup
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
     camera.position.set(7, 6, 8);
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
-    // 3. Renderer Setup
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(window.devicePixelRatio);
@@ -97,7 +125,6 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // 4. Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
     scene.add(ambientLight);
 
@@ -109,12 +136,10 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     dirLight2.position.set(-10, -5, -10);
     scene.add(dirLight2);
 
-    // 5. Grid
     const grid = new THREE.GridHelper(10, 20, 0x1e293b, 0x1e293b);
     grid.position.y = -2.2;
     scene.add(grid);
 
-    // Geometry & vector groups
     const meshGroup = new THREE.Group();
     scene.add(meshGroup);
     meshGroupRef.current = meshGroup;
@@ -123,7 +148,6 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     scene.add(vectorsGroup);
     vectorsGroupRef.current = vectorsGroup;
 
-    // Hotspot / Probe marker sphere
     const markerGeo = new THREE.SphereGeometry(0.12, 16, 16);
     const markerMat = new THREE.MeshBasicMaterial({ color: 0xff0055, wireframe: true });
     const probeMarker = new THREE.Mesh(markerGeo, markerMat);
@@ -131,10 +155,10 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     scene.add(probeMarker);
     probeMarkerRef.current = probeMarker;
 
-    // Mouse Interaction
     let isDragging = false;
+    let downPos = { x: 0, y: 0 };
     let prevMouse = { x: 0, y: 0 };
-    let spherical = { radius: 12, theta: Math.PI / 4, phi: Math.PI / 3 };
+    const spherical = { radius: 12, theta: Math.PI / 4, phi: Math.PI / 3 };
 
     const updateCameraPos = () => {
       camera.position.x = spherical.radius * Math.sin(spherical.phi) * Math.sin(spherical.theta);
@@ -146,6 +170,7 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
 
     const onMouseDown = (e: MouseEvent) => {
       isDragging = true;
+      downPos = { x: e.clientX, y: e.clientY };
       prevMouse = { x: e.clientX, y: e.clientY };
     };
 
@@ -170,7 +195,8 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     };
 
     const onClick = (e: MouseEvent) => {
-      if (!containerRef.current || !meshGroupRef.current || isDragging) return;
+      const moveDist = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
+      if (!containerRef.current || !meshGroupRef.current || moveDist > 5) return;
       const rect = containerRef.current.getBoundingClientRect();
       mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -181,26 +207,23 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
       if (intersects.length > 0) {
         const hit = intersects[0];
         const pt = hit.point;
-        if (hit.face && hit.object instanceof THREE.Mesh) {
-          const geo = hit.object.geometry as THREE.BufferGeometry;
-          const colAttr = geo.getAttribute('color');
-          if (colAttr) {
-            // Approximate probe temperature from color ratio
-            const r = colAttr.getX(hit.face.a);
-            const b = colAttr.getZ(hit.face.a);
-            const probed = tMin + (tMax - tMin) * (r / (r + b + 0.1));
-            setProbedData({
-              temp: probed,
-              x: Number(pt.x.toFixed(2)),
-              y: Number(pt.y.toFixed(2)),
-              z: Number(pt.z.toFixed(2))
-            });
-            if (probeMarkerRef.current) {
-              probeMarkerRef.current.position.copy(pt);
-              probeMarkerRef.current.visible = true;
-            }
-            if (onProbeTemp) onProbeTemp(probed, `(${pt.x.toFixed(2)}, ${pt.y.toFixed(2)}, ${pt.z.toFixed(2)})`);
+        const sm = surfaceMeshRef.current;
+        if (hit.face && sm && sm.temperatures) {
+          const vIdx = hit.face.a;
+          const exactTemp = sm.temperatures[vIdx] ?? tMin;
+          const exactFlux = sm.heat_fluxes && sm.heat_fluxes[vIdx] !== undefined ? sm.heat_fluxes[vIdx] : null;
+          setProbedData({
+            temp: exactTemp,
+            flux: exactFlux,
+            x: Number(pt.x.toFixed(2)),
+            y: Number(pt.y.toFixed(2)),
+            z: Number(pt.z.toFixed(2))
+          });
+          if (probeMarkerRef.current) {
+            probeMarkerRef.current.position.copy(pt);
+            probeMarkerRef.current.visible = true;
           }
+          if (onProbeTemp) onProbeTemp(exactTemp, `(${pt.x.toFixed(2)}, ${pt.y.toFixed(2)}, ${pt.z.toFixed(2)})`);
         }
       }
     };
@@ -212,7 +235,6 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     dom.addEventListener('wheel', onWheel);
     dom.addEventListener('click', onClick);
 
-    // Animation Loop
     let animId: number;
     const animate = () => {
       animId = requestAnimationFrame(animate);
@@ -245,7 +267,6 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     };
   }, []);
 
-  // Camera presets
   const applyCameraPreset = (preset: 'iso' | 'top' | 'front' | 'side') => {
     if (!cameraRef.current) return;
     setCameraPreset(preset);
@@ -262,17 +283,21 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     camera.lookAt(0, 0, 0);
   };
 
-  // Export screenshot
   const exportImage = () => {
     if (!rendererRef.current) return;
     const dataURL = rendererRef.current.domElement.toDataURL('image/png');
     const a = document.createElement('a');
     a.href = dataURL;
-    a.download = `thermoforge_simulation_${Date.now()}.png`;
+    a.download = `thermoforge_simulation_${vizMode}_${Date.now()}.png`;
     a.click();
   };
 
-  // Re-build 3D Mesh when surfaceMesh or vizMode changes
+  const qMin = surfaceMesh?.heat_flux_range?.q_min_w_m2 ?? 0;
+  const qMax = surfaceMesh?.heat_flux_range?.q_max_w_m2 ?? 1;
+  const qAvg = surfaceMesh?.heat_flux_range?.q_avg_w_m2 ?? (qMin + qMax) * 0.5;
+  const filterThresholdTemp = tMin + (tMax - tMin) * (tempFilterPct / 100);
+
+  // Re-build 3D Mesh when surfaceMesh, vizMode, or filter changes
   useEffect(() => {
     if (!meshGroupRef.current || !surfaceMesh) return;
     const group = meshGroupRef.current;
@@ -280,9 +305,8 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
       group.remove(group.children[0]);
     }
 
-    const { positions, normals, temperatures, wireframe_lines, hotspot } = surfaceMesh;
+    const { positions, normals, temperatures, heat_fluxes, wireframe_lines, hotspot } = surfaceMesh;
 
-    // 1. Triangular Surface Mesh
     const triGeo = new THREE.BufferGeometry();
     const posArr = new Float32Array(positions);
     const normArr = new Float32Array(normals);
@@ -293,15 +317,23 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     const colArr = new Float32Array(numVerts * 3);
 
     for (let i = 0; i < numVerts; i++) {
-      const temp = temperatures[i] || tMin;
+      const temp = temperatures[i] ?? tMin;
+      const flux = heat_fluxes && heat_fluxes[i] !== undefined ? heat_fluxes[i] : qMin;
       let col: THREE.Color;
       if (vizMode === 'solid') {
         col = new THREE.Color(0x94a3b8);
       } else if (vizMode === 'hotspot') {
-        const isHot = (temp - tMin) / (tMax - tMin || 1) > 0.8;
+        const isHot = (temp - tMin) / (tMax - tMin || 1) >= 0.8;
         col = isHot ? new THREE.Color(0xff1e56) : new THREE.Color(0x1e293b);
+      } else if (vizMode === 'heat_flux') {
+        // Actual computed heat flux magnitude |q| = |-k ∇T| in W/m²
+        col = getHeatFluxColor(flux, qMin, qMax);
       } else {
-        col = getTemperatureColor(temp, tMin, tMax);
+        if (tempFilterPct > 0 && temp < filterThresholdTemp) {
+          col = new THREE.Color(0x1e293b);
+        } else {
+          col = getTemperatureColor(temp, tMin, tMax);
+        }
       }
       colArr[i * 3] = col.r;
       colArr[i * 3 + 1] = col.g;
@@ -322,26 +354,23 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     const triMesh = new THREE.Mesh(triGeo, triMat);
     group.add(triMesh);
 
-    // 2. Wireframe Overlay
     if (vizMode === 'wireframe' || vizMode === 'solid' || vizMode === 'temperature' || vizMode === 'heat_flux') {
       const lineGeo = new THREE.BufferGeometry();
       lineGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(wireframe_lines), 3));
       const lineMat = new THREE.LineBasicMaterial({
         color: vizMode === 'wireframe' ? 0x38bdf8 : 0x0f172a,
         transparent: true,
-        opacity: vizMode === 'wireframe' ? 0.9 : 0.25
+        opacity: vizMode === 'wireframe' ? 0.9 : 0.22
       });
       const lines = new THREE.LineSegments(lineGeo, lineMat);
       group.add(lines);
     }
 
-    // 3. Hotspot pin
     if (vizMode === 'hotspot' && hotspot && probeMarkerRef.current) {
       probeMarkerRef.current.position.set(hotspot.coordinate[0], hotspot.coordinate[1], hotspot.coordinate[2]);
       probeMarkerRef.current.visible = true;
     }
 
-    // 4. Heat Flux Vectors (Priority 3)
     if (vectorsGroupRef.current) {
       const vGroup = vectorsGroupRef.current;
       while (vGroup.children.length > 0) {
@@ -352,44 +381,117 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
         surfaceMesh.heat_flux_vectors.forEach((vec) => {
           const origin = new THREE.Vector3(vec.origin[0], vec.origin[1], vec.origin[2]);
           const dir = new THREE.Vector3(vec.direction[0], vec.direction[1], vec.direction[2]);
-          const len = 0.35;
-          const arrow = new THREE.ArrowHelper(dir, origin, len, 0x06b6d4, 0.1, 0.06);
+          const normMag = Math.max(0, Math.min(1, (vec.magnitude - qMin) / (qMax - qMin || 1)));
+          const len = 0.22 + 0.28 * normMag;
+          const arrowCol = getHeatFluxColor(vec.magnitude, qMin, qMax).getHex();
+          const arrow = new THREE.ArrowHelper(dir, origin, len, arrowCol, 0.11, 0.065);
           vGroup.add(arrow);
         });
       }
     }
-
-  }, [surfaceMesh, vizMode, showFluxVectors, tMin, tMax]);
+  }, [surfaceMesh, vizMode, showFluxVectors, tMin, tMax, qMin, qMax, tempFilterPct, filterThresholdTemp]);
 
   return (
     <div className="relative w-full h-full select-none overflow-hidden rounded-xl border border-graphite-800 bg-graphite-950">
       <div ref={containerRef} className="w-full h-full cursor-crosshair active:cursor-grabbing" />
 
-      {/* Engineering Temperature Legend */}
-      <div className="absolute top-4 right-4 bg-graphite-900/95 backdrop-blur-md p-3.5 rounded-lg border border-graphite-700 shadow-xl flex flex-col items-center pointer-events-none">
-        <span className="text-[10px] font-bold tracking-wider text-gray-300 mb-1">TEMPERATURE CONTOUR (°C)</span>
-        <div className="flex items-center space-x-2">
-          <span className="text-xs font-mono font-bold text-rose-500">{tMax.toFixed(1)}°</span>
-          <div className="w-4 h-36 rounded-sm bg-gradient-to-t from-blue-600 via-cyan-400 via-yellow-400 to-red-600 border border-graphite-700 shadow-inner" />
-          <span className="text-xs font-mono font-bold text-blue-400">{tMin.toFixed(1)}°</span>
-        </div>
-        <div className="mt-2 text-[9px] text-gray-500 uppercase tracking-widest font-mono">FE Thermal Gradient</div>
+      {/* Mode-Specific Calibrated Engineering Legend */}
+      <div className="absolute top-4 right-4 bg-graphite-900/95 backdrop-blur-md p-3.5 rounded-lg border border-graphite-700 shadow-xl flex flex-col items-center min-w-[148px]">
+        {vizMode === 'heat_flux' ? (
+          <>
+            <span className="text-[10px] font-bold tracking-wider text-cyan-300 mb-1">HEAT FLUX |q| (W/m²)</span>
+            <div className="flex items-center space-x-2">
+              <div className="flex flex-col justify-between h-36 text-[10px] font-mono text-right">
+                <span className="font-bold text-yellow-200">{qMax.toFixed(0)} W/m²</span>
+                <span className="text-cyan-300">{qAvg.toFixed(0)} W/m²</span>
+                <span className="text-slate-400">{qMin.toFixed(0)} W/m²</span>
+              </div>
+              <div className="w-4 h-36 rounded-sm bg-gradient-to-t from-slate-900 via-teal-600 via-cyan-400 to-yellow-200 border border-graphite-700 shadow-inner" />
+            </div>
+            <div className="mt-2 text-[9px] text-cyan-400/90 uppercase tracking-widest font-mono">q = -k·∇T (Fourier)</div>
+          </>
+        ) : vizMode === 'hotspot' ? (
+          <>
+            <span className="text-[10px] font-bold tracking-wider text-rose-400 mb-1">HOTSPOT ISOLATION (°C)</span>
+            <div className="flex items-center space-x-2">
+              <div className="flex flex-col justify-between h-32 text-[10px] font-mono text-right">
+                <span className="font-bold text-rose-400">Peak: {tMax.toFixed(2)}°C</span>
+                <span className="text-rose-300"> Cutoff: {(tMin + (tMax - tMin) * 0.8).toFixed(2)}°C</span>
+                <span className="text-gray-500">Base: {tMin.toFixed(2)}°C</span>
+              </div>
+              <div className="w-4 h-32 rounded-sm bg-gradient-to-t from-slate-800 via-slate-800 to-rose-600 border border-graphite-700 shadow-inner" />
+            </div>
+            <div className="mt-2 text-[9px] text-rose-400/80 uppercase tracking-widest font-mono">Top 20% Thermal Rise</div>
+          </>
+        ) : vizMode === 'solid' ? (
+          <>
+            <span className="text-[10px] font-bold tracking-wider text-gray-300 mb-1">SOLID CAD GEOMETRY</span>
+            <div className="w-28 py-2 px-2 rounded bg-slate-400/20 border border-slate-500 text-center text-[10px] text-gray-200 font-mono">
+              3D STEPPED FINNED ASSEMBLY
+            </div>
+            <div className="mt-2 text-[9px] text-gray-400 font-mono">
+              Triangles: {surfaceMesh?.num_triangles ?? 0}
+            </div>
+          </>
+        ) : vizMode === 'wireframe' ? (
+          <>
+            <span className="text-[10px] font-bold tracking-wider text-cyan-400 mb-1">FEM HEX-8 MESH</span>
+            <div className="w-28 py-2 px-2 rounded bg-cyan-950/40 border border-cyan-500/50 text-center text-[10px] text-cyan-300 font-mono">
+              TRILINEAR HEXAHEDRA
+            </div>
+            <div className="mt-2 text-[9px] text-gray-400 font-mono">
+              Boundary Faces: {(surfaceMesh?.num_triangles ?? 0) / 2}
+            </div>
+          </>
+        ) : (
+          <>
+            <span className="text-[10px] font-bold tracking-wider text-gray-300 mb-1">
+              {vizMode === 'cross_section' ? 'SECTION CONTOUR (°C)' : 'TEMPERATURE (°C)'}
+            </span>
+            <div className="flex items-center space-x-2">
+              <div className="flex flex-col justify-between h-36 text-[10px] font-mono text-right">
+                <span className="font-bold text-rose-400">{tMax.toFixed(2)}°C</span>
+                <span className="text-emerald-300">{((tMin + tMax) * 0.5).toFixed(2)}°C</span>
+                <span className="font-bold text-blue-400">{tMin.toFixed(2)}°C</span>
+              </div>
+              <div className="w-4 h-36 rounded-sm bg-gradient-to-t from-blue-600 via-cyan-400 via-yellow-400 to-red-600 border border-graphite-700 shadow-inner" />
+            </div>
+            <div className="w-full mt-2 pt-2 border-t border-graphite-800">
+              <div className="flex justify-between text-[9px] font-mono text-gray-400">
+                <span>Filter &ge;</span>
+                <span className="text-cyan-300">{filterThresholdTemp.toFixed(1)}°C</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="90"
+                step="5"
+                value={tempFilterPct}
+                onChange={(e) => setTempFilterPct(Number(e.target.value))}
+                className="w-full h-1 accent-cyan-500 cursor-pointer"
+              />
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Probed Node Info Box */}
+      {/* Probed Node Info Box (Exact FEM Nodal Lookup) */}
       {probedData && (
         <div className="absolute top-4 left-4 bg-graphite-900/95 backdrop-blur-md p-3 rounded-lg border border-cyan-500/50 shadow-xl text-xs font-mono text-gray-200">
           <div className="text-cyan-400 font-bold mb-1 flex items-center justify-between">
-            <span>PROBED NODE:</span>
+            <span>FEM SURFACE PROBE</span>
             <button
               onClick={() => setProbedData(null)}
-              className="text-gray-400 hover:text-white ml-2 text-[10px] cursor-pointer"
+              className="text-gray-400 hover:text-white ml-3 text-[10px] cursor-pointer"
             >
               ✕
             </button>
           </div>
-          <div>Temp: <strong className="text-rose-400">{probedData.temp.toFixed(2)} °C</strong></div>
-          <div className="text-[10px] text-gray-400">Coord: ({probedData.x}, {probedData.y}, {probedData.z})</div>
+          <div>Temperature: <strong className="text-rose-400">{probedData.temp.toFixed(3)} °C</strong></div>
+          {probedData.flux !== null && (
+            <div>Heat Flux |q|: <strong className="text-cyan-300">{probedData.flux.toFixed(1)} W/m²</strong></div>
+          )}
+          <div className="text-[10px] text-gray-400 mt-0.5">Coord: ({probedData.x}, {probedData.y}, {probedData.z})</div>
         </div>
       )}
 
@@ -412,7 +514,7 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
           onClick={exportImage}
           className="px-2.5 py-1 bg-graphite-800 hover:bg-graphite-700 text-cyan-300 rounded text-[10px] font-mono transition-all"
         >
-          📷 Capture
+          📷 Export PNG
         </button>
       </div>
 
@@ -420,10 +522,10 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
       <div className="absolute bottom-4 left-4 bg-graphite-900/80 backdrop-blur-md px-3 py-1.5 rounded-md border border-graphite-700 text-xs text-gray-300 flex items-center space-x-3 pointer-events-none">
         <span className="flex items-center space-x-1">
           <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-          <span className="font-mono text-cyan-300">Click Surface: Probe Temperature</span>
+          <span className="font-mono text-cyan-300">Click Surface: Probe Exact T &amp; |q|</span>
         </span>
         <span className="text-gray-600">|</span>
-        <span className="font-mono text-gray-400">Left Drag: Orbit</span>
+        <span className="font-mono text-gray-400">Drag: Orbit • Wheel: Zoom</span>
       </div>
     </div>
   );

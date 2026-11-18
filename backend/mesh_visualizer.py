@@ -59,6 +59,7 @@ def extract_surface_mesh_for_threejs(
     tri_positions = []
     tri_normals = []
     tri_temperatures = []
+    tri_heat_fluxes = []
     wireframe_lines = []
 
     # Center coordinates around origin for easy Three.js orbit rotation
@@ -77,6 +78,7 @@ def extract_surface_mesh_for_threejs(
 
     # Heat flux vectors representation: [origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, magnitude]
     heat_flux_vectors = []
+    all_flux_mags: List[float] = []
     heat_source_coords = []
 
     # Find global peak hotspot
@@ -107,6 +109,7 @@ def extract_surface_mesh_for_threejs(
                 qy = -conductivity * dT_dy
                 qz = -conductivity * dT_dz
                 q_mag = float(np.sqrt(qx**2 + qy**2 + qz**2))
+                all_flux_mags.append(q_mag)
 
                 for f_idx, (di, dj, dk) in enumerate(neighbors):
                     ni, nj, nk = i + di, j + dj, k + dk
@@ -126,12 +129,14 @@ def extract_surface_mesh_for_threejs(
                             tri_positions.extend(nodes_centered[idx].tolist())
                             tri_normals.extend(n_vec)
                             tri_temperatures.append(float(T_arr[idx]))
+                            tri_heat_fluxes.append(q_mag)
 
                         # Triangle 2
                         for idx in [fn[0], fn[2], fn[3]]:
                             tri_positions.extend(nodes_centered[idx].tolist())
                             tri_normals.extend(n_vec)
                             tri_temperatures.append(float(T_arr[idx]))
+                            tri_heat_fluxes.append(q_mag)
 
                         # Wireframe edges
                         wireframe_lines.extend(nodes_centered[fn[0]].tolist())
@@ -154,15 +159,27 @@ def extract_surface_mesh_for_threejs(
                                     "magnitude": q_mag
                                 })
 
+    # Heat flux magnitude range over ALL active elements (W/m^2), from q = -k ∇T (element-centre gradient)
+    flux_mags = all_flux_mags if all_flux_mags else [0.0]
+    q_flux_min = float(np.min(flux_mags))
+    q_flux_max = float(np.max(flux_mags))
+    q_flux_avg = float(np.mean(flux_mags))
+
     return {
         "positions": tri_positions,
         "normals": tri_normals,
         "temperatures": tri_temperatures,
+        "heat_fluxes": tri_heat_fluxes,
         "wireframe_lines": wireframe_lines,
         "num_triangles": len(tri_positions) // 9,
         "scale_factor": scale_factor,
         "heat_source_centroids": heat_source_coords,
         "heat_flux_vectors": heat_flux_vectors,
+        "heat_flux_range": {
+            "q_min_w_m2": round(q_flux_min, 2),
+            "q_max_w_m2": round(q_flux_max, 2),
+            "q_avg_w_m2": round(q_flux_avg, 2)
+        },
         "hotspot": {
             "coordinate": hotspot_coord,
             "peak_temperature": hotspot_peak_temp
