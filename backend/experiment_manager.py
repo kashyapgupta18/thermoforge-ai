@@ -97,7 +97,12 @@ def compute_energy_balance(
 
     return {
         "q_in_watts": float(power_watts),
+        "q_in_volumetric_watts": float(power_watts),
+        "q_in_prescribed_flux_watts": 0.0,
         "q_out_convective_watts": float(total_convective_heat_out),
+        "q_out_adiabatic_watts": 0.0,
+        "q_out_dirichlet_watts": 0.0,
+        "net_imbalance_watts": float(power_watts - total_convective_heat_out),
         "heat_loss_discrepancy_watts": abs_diff,
         "relative_error": rel_error,
         "energy_balance_error_percent": rel_error_pct,
@@ -105,9 +110,10 @@ def compute_energy_balance(
         "total_exposed_surface_area_m2": round(total_surface_area, 6),
         "energy_conserved": bool(rel_error_pct < 0.5),
         "calculation_explanation": (
-            f"Global conservation check: Volumetric input Q_in = ∫_die Q dV = {power_watts:.4f} W vs. "
-            f"convective boundary integral Q_out = Σ_faces h·A_f·(T_f - T_∞) = {total_convective_heat_out:.6f} W "
-            f"over {total_surface_area:.5f} m² exposed area. Discrepancy |Q_in - Q_out| = {abs_diff:.3e} W ({err_fmt})."
+            f"Global conservation check (SI Watts): Volumetric input Q_in = ∫_die q''' dV = +{power_watts:.4f} W "
+            f"(prescribed boundary heat flux Q_flux = 0.0000 W; adiabatic boundary loss Q_adiabatic = 0.0000 W) vs. "
+            f"convective Robin boundary integral Q_out,conv = Σ_faces h·A_f·(T_f - T_∞) = +{total_convective_heat_out:.6f} W "
+            f"over {total_surface_area:.5f} m² exposed area. Net imbalance Q_in - Q_out = {power_watts - total_convective_heat_out:+.3e} W ({err_fmt})."
         )
     }
 
@@ -194,11 +200,17 @@ def run_3x3_geometry_complexity_benchmark(
                 "min_runtime_ms": round(s_data.get("min_runtime_ms", s_data["execution_time_ms"]), 3),
                 "max_runtime_ms": round(s_data.get("max_runtime_ms", s_data["execution_time_ms"]), 3),
                 "execution_time_ms": round(s_data.get("median_runtime_ms", s_data["execution_time_ms"]), 3),
+                "factorization_ms": s_data.get("median_factorization_ms", s_data.get("factorization_ms")),
+                "substitution_ms": s_data.get("median_substitution_ms", s_data.get("substitution_ms")),
                 "speedup_vs_lu_median": s_data.get("speedup_vs_lu_median", 1.0),
                 "iterations": s_data["iterations"],
+                "iterations_display": s_data.get("iterations_display", "N/A (Direct)" if s_key == "direct_lu" else str(s_data["iterations"])),
+                "iterations_applicable": s_data.get("iterations_applicable", s_key != "direct_lu"),
                 "final_residual": s_data["final_residual"],
                 "absolute_residual": s_data.get("absolute_residual", 0.0),
                 "memory_mb": s_data["memory_mb"],
+                "base_system_memory_mb": s_data.get("base_system_memory_mb"),
+                "additional_solver_memory_mb": s_data.get("additional_solver_memory_mb"),
                 "t_max": s_data["t_max"],
                 "t_avg": s_data["t_avg"],
                 "t_min": s_data["t_min"],
@@ -547,17 +559,17 @@ def run_parametric_optimization_sweep(
 
     if objective == "min_thermal_resistance":
         best_entry = min(sweep_results, key=lambda x: x["thermal_resistance_k_per_w"])
-        obj_label = "Minimize Thermal Resistance (R_th)"
+        obj_label = "Minimize Thermal Resistance (R_th = ΔT_max/Q)"
     elif objective == "max_cooling_conductance":
         best_entry = max(sweep_results, key=lambda x: x["cooling_conductance_w_per_k"])
-        obj_label = "Maximize Cooling Conductance (G_th)"
+        obj_label = "Maximize Cooling Conductance (G_th = 1/R_th)"
     elif objective == "min_volume":
         best_entry = min(sweep_results, key=lambda x: (x["material_volume_cm3"], x["t_max"]))
         obj_label = "Minimize Material Volume & Mass"
     elif objective == "multi_objective":
         pareto_pool = pareto_frontier if pareto_frontier else sweep_results
         best_entry = min(pareto_pool, key=lambda x: x["multi_objective_score"])
-        obj_label = "Multi-Objective Pareto Balance (Thermal Resistance vs. Mass)"
+        obj_label = "Multi-Objective Pareto Balance (Thermal Resistance R_th vs. Mass m)"
     else:
         best_entry = min(sweep_results, key=lambda x: x["t_max"])
         obj_label = "Minimize Maximum Junction Temperature (T_max)"
@@ -570,6 +582,34 @@ def run_parametric_optimization_sweep(
         "search_space_size": len(sweep_results),
         "results": sweep_results,
         "pareto_frontier": pareto_frontier,
+        "optimization_methodology": {
+            "design_variables": (
+                "8 discrete design variables: fin_count [4..12], fin_spacing_ratio [0.70..1.30], "
+                "fin_thickness_ratio [0.60..1.50], fin_height_ratio [0.40..0.90], base_thickness_ratio [0.20..0.55], "
+                "material_conductivity [16.2..400 W/m·K], power_watts [35..100 W], convection_h [15..100 W/m²K]."
+            ),
+            "independent_pareto_objectives": [
+                "f1(x): Minimize Thermal Resistance R_th = (T_max - T_∞)/Q [K/W]",
+                "f2(x): Minimize Solid Mass m = ρ · V_solid [g] (and Solid Volume V_solid [cm³])"
+            ],
+            "reciprocal_dependency_audit": (
+                "Under fixed power Q and ambient T_∞, Thermal Resistance R_th = (T_max - T_∞)/Q and Thermal Conductance "
+                "G_th = Q/(T_max - T_∞) = 1/R_th are exact mathematical reciprocals (and Peak Temperature T_max = T_∞ + Q·R_th "
+                "is a positive affine transformation). Therefore, minimizing T_max, minimizing R_th, and maximizing G_th "
+                "are mathematically equivalent single-objective formulations of f1 and are never treated as independent Pareto axes."
+            ),
+            "constraints": (
+                "Bounded 3D heat sink footprint (80×60×40 mm nominal), positive inter-fin convective channel clearance, "
+                "SPD stiffness matrix K, and global steady-state energy balance |Q_in - Q_out|/Q_in < 1e-3."
+            ),
+            "pareto_dominance_definition": (
+                "Design A Pareto-dominates Design B iff R_th(A) ≤ R_th(B) and Mass(A) ≤ Mass(B) with at least one strict inequality."
+            ),
+            "search_limitations": (
+                "Evaluates a finite discrete set of candidate configurations on a structured hexahedral voxel mesh; "
+                "identifies the best tested configuration rather than claiming an unconstrained continuous global optimum."
+            )
+        },
         "optimal_point": {
             "scope_note": "Best design found within tested discrete configurations (not an unconstrained global optimum)",
             "parameter_value": best_entry["param_value"],
@@ -585,13 +625,43 @@ def run_parametric_optimization_sweep(
         "engineering_recommendation": (
             f"Best Design Found Within Tested Configurations ({obj_label}): {param_name} = {best_entry['param_value']} "
             f"yields T_max = {best_entry['t_max']:.2f}°C, R_th = {best_entry['thermal_resistance_k_per_w']:.4f} K/W "
-            f"(G_th = {best_entry['cooling_conductance_w_per_k']:.3f} W/K), solid volume = {best_entry['material_volume_cm3']:.2f} cm³, "
-            f"mass = {best_entry['mass_grams']:.1f} g ({len(pareto_frontier)}/{len(sweep_results)} tested points lie on the non-dominated Pareto frontier)."
+            f"(reciprocal conductance G_th = 1/R_th = {best_entry['cooling_conductance_w_per_k']:.3f} W/K), solid volume = {best_entry['material_volume_cm3']:.2f} cm³, "
+            f"mass = {best_entry['mass_grams']:.1f} g ({len(pareto_frontier)}/{len(sweep_results)} tested points lie on the non-dominated (R_th, Mass) Pareto frontier)."
         )
     }
 
 
 BACKEND_VERSION = "3.1.0-RESEARCH"
+
+DEFAULT_EXPERIMENT_CONFIG = {
+    "preset": "advanced_heat_sink",
+    "material": "aluminium_6061",
+    "fin_count": 7,
+    "fin_height_ratio": 0.65,
+    "base_thickness_ratio": 0.35,
+    "fin_thickness_ratio": 1.0,
+    "fin_spacing_ratio": 1.0,
+    "power_watts": 65.0,
+    "convection_h": 45.0,
+    "ambient_temp_celsius": 20.0,
+    "resolution": "coarse",
+    "sor_omega": 1.9,
+    "initial_guess": "lumped",
+    "tolerance_rel": 1e-6,
+    "max_iterations": 1500,
+    "repetitions": 1
+}
+
+
+def _format_eb_error(eb: Dict[str, Any]) -> str:
+    if not eb:
+        return "—"
+    if "energy_balance_error_formatted" in eb and eb["energy_balance_error_formatted"] != "—":
+        return str(eb["energy_balance_error_formatted"])
+    if "energy_balance_error_percent" in eb and eb["energy_balance_error_percent"] is not None:
+        val = float(eb["energy_balance_error_percent"])
+        return f"{val:.2e}%" if val < 1e-2 else f"{val:.3f}%"
+    return "—"
 
 
 def save_experiment_run(experiment_payload: Dict[str, Any]) -> str:
@@ -628,7 +698,7 @@ def save_experiment_run(experiment_payload: Dict[str, Any]) -> str:
         "resolution": raw_cfg.get("resolution", "coarse"),
         "sor_omega": float(raw_cfg.get("sor_omega", s_settings.get("sor_omega", 1.9))),
         "initial_guess": raw_cfg.get("initial_guess", s_settings.get("initial_guess", "lumped")),
-        "tolerance_rel": float(raw_cfg.get("tolerance", s_settings.get("tolerance_rel", 1e-6))),
+        "tolerance_rel": float(raw_cfg.get("tolerance", raw_cfg.get("tolerance_rel", s_settings.get("tolerance_rel", 1e-6)))),
         "max_iterations": int(raw_cfg.get("max_iterations", s_settings.get("max_iterations", 1500))),
         "repetitions": int(raw_cfg.get("repetitions", s_settings.get("repetitions", 1))),
         "degrees_of_freedom": m_info.get("degrees_of_freedom"),
@@ -685,7 +755,8 @@ def list_saved_experiments() -> List[Dict[str, Any]]:
             try:
                 with open(fpath, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    cfg = data.get("config", {})
+                    raw_cfg = data.get("config", {})
+                    cfg = {**DEFAULT_EXPERIMENT_CONFIG, **{k: v for k, v in raw_cfg.items() if v is not None}}
                     solvers = data.get("results", {}).get("solvers", {})
                     m_info = data.get("results", {}).get("mesh_info", {})
                     eb = data.get("results", {}).get("energy_balance", {})
@@ -703,6 +774,7 @@ def list_saved_experiments() -> List[Dict[str, Any]]:
                         "resolution": cfg.get("resolution", "coarse"),
                         "sor_omega": cfg.get("sor_omega", 1.9),
                         "initial_guess": cfg.get("initial_guess", "lumped"),
+                        "tolerance_rel": cfg.get("tolerance_rel", 1e-6),
                         "dof": m_info.get("degrees_of_freedom", cfg.get("degrees_of_freedom")),
                         "t_max": solvers.get("direct_lu", {}).get("t_max", None),
                         "t_avg": solvers.get("direct_lu", {}).get("t_avg", None),
@@ -710,7 +782,7 @@ def list_saved_experiments() -> List[Dict[str, Any]]:
                         "cg_time_ms": solvers.get("conjugate_gradient", {}).get("execution_time_ms", None),
                         "sor_time_ms": solvers.get("sor", {}).get("execution_time_ms", None),
                         "sor_status": solvers.get("sor", {}).get("status_label", "Converged"),
-                        "energy_balance_error_formatted": eb.get("energy_balance_error_formatted", "—")
+                        "energy_balance_error_formatted": _format_eb_error(eb)
                     })
             except Exception:
                 continue
@@ -727,6 +799,11 @@ def compare_experiments(exp_ids: List[str]) -> Dict[str, Any]:
     for eid in exp_ids:
         rec = get_experiment_by_id(eid)
         if rec:
+            raw_cfg = rec.get("config", {})
+            rec["normalized_config"] = {
+                **DEFAULT_EXPERIMENT_CONFIG,
+                **{k: v for k, v in raw_cfg.items() if v is not None}
+            }
             records.append(rec)
 
     if len(records) < 2:
@@ -742,11 +819,11 @@ def compare_experiments(exp_ids: List[str]) -> Dict[str, Any]:
     unchanged_parameters = []
 
     for key in tracked_keys:
-        vals = [r.get("config", {}).get(key) for r in records]
+        vals = [r["normalized_config"].get(key) for r in records]
         unique_vals = {json.dumps(v, sort_keys=True) for v in vals}
         entry = {
             "parameter": key,
-            "values_by_experiment": {r["id"]: r.get("config", {}).get(key) for r in records}
+            "values_by_experiment": {r["id"]: r["normalized_config"].get(key) for r in records}
         }
         if len(unique_vals) > 1:
             changed_parameters.append(entry)
@@ -755,7 +832,7 @@ def compare_experiments(exp_ids: List[str]) -> Dict[str, Any]:
 
     comparison_rows = []
     for r in records:
-        cfg = r.get("config", {})
+        cfg = r["normalized_config"]
         res = r.get("results", {})
         solvers = res.get("solvers", {})
         m_info = res.get("mesh_info", {})
@@ -780,7 +857,7 @@ def compare_experiments(exp_ids: List[str]) -> Dict[str, Any]:
             "sor_time_ms": solvers.get("sor", {}).get("execution_time_ms"),
             "sor_iterations": solvers.get("sor", {}).get("iterations"),
             "sor_status": solvers.get("sor", {}).get("status_label"),
-            "energy_balance_error": eb.get("energy_balance_error_formatted", "—"),
+            "energy_balance_error": _format_eb_error(eb),
             "winner_id": res.get("winner_id")
         })
 

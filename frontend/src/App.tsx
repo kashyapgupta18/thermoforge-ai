@@ -69,10 +69,18 @@ interface SolverStats {
   std_runtime_ms?: number;
   min_runtime_ms?: number;
   max_runtime_ms?: number;
+  factorization_ms?: number;
+  substitution_ms?: number;
+  median_factorization_ms?: number;
+  median_substitution_ms?: number;
   repetitions?: number;
   trial_runtimes_ms?: number[];
   speedup_vs_lu_median?: number;
   iterations: number;
+  iterations_display?: string;
+  iterations_applicable?: boolean;
+  base_system_memory_mb?: number;
+  additional_solver_memory_mb?: number;
   converged: boolean;
   status_label?: string;
   final_residual: number;
@@ -1027,7 +1035,7 @@ export function App() {
                         </div>
                         <div className="grid grid-cols-3 gap-1 text-[11px] font-mono text-gray-400 mt-1">
                           <div>Median: <strong className="text-gray-200">{medTime.toFixed(1)}ms</strong></div>
-                          <div>Iters: <strong className="text-gray-200">{s.iterations}</strong></div>
+                          <div>Iters: <strong className="text-gray-200">{sKey === 'direct_lu' ? 'N/A (Direct)' : s.iterations}</strong></div>
                           <div>Res: <strong className="text-cyan-300">{s.final_residual.toExponential(1)}</strong></div>
                         </div>
                         <div className="flex justify-between text-[10px] font-mono text-gray-400 mt-1 pt-1 border-t border-graphite-800">
@@ -1146,10 +1154,18 @@ export function App() {
                       </div>
                       <div className="flex justify-between text-gray-400">
                         <span>Iterations Executed:</span>
-                        <strong className="text-white">{s.iterations}</strong>
+                        <strong className="text-white">{sKey === 'direct_lu' ? 'N/A (Direct)' : s.iterations}</strong>
                       </div>
+                      {sKey === 'direct_lu' && s.factorization_ms !== undefined && (
+                        <div className="flex justify-between text-gray-400">
+                          <span>Factorize / Solve Split:</span>
+                          <strong className="text-cyan-300">
+                            {(s.median_factorization_ms ?? s.factorization_ms).toFixed(2)} / {(s.median_substitution_ms ?? s.substitution_ms ?? 0).toFixed(2)} ms
+                          </strong>
+                        </div>
+                      )}
                       <div className="flex justify-between text-gray-400">
-                        <span>Relative Residual ||r||/||F||:</span>
+                        <span>True Rel. Residual ||r||₂/||F||₂:</span>
                         <strong className={s.converged ? 'text-emerald-400' : 'text-amber-400'}>{s.final_residual.toExponential(3)}</strong>
                       </div>
                       <div className="flex justify-between text-gray-400">
@@ -1157,8 +1173,11 @@ export function App() {
                         <strong className="text-gray-200">{(s.absolute_residual ?? 0).toExponential(3)} W</strong>
                       </div>
                       <div className="flex justify-between text-gray-400">
-                        <span>Working Memory:</span>
-                        <strong className="text-white">{s.memory_mb.toFixed(3)} MB</strong>
+                        <span>Total Memory (Base + Alloc):</span>
+                        <strong className="text-white">
+                          {s.memory_mb.toFixed(3)} MB
+                          {s.additional_solver_memory_mb !== undefined ? ` (+${s.additional_solver_memory_mb.toFixed(3)})` : ''}
+                        </strong>
                       </div>
                       <div className="flex justify-between text-gray-400">
                         <span>Temp Range [T_min, T_max]:</span>
@@ -1340,11 +1359,21 @@ export function App() {
                       <tbody className="divide-y divide-graphite-800">
                         {omegaStudy.results.map((r: any, idx: number) => (
                           <tr key={idx} className="hover:bg-graphite-850/50">
-                            <td className="p-2.5 font-bold text-amber-400">ω = {r.omega.toFixed(2)}</td>
-                            <td className="p-2.5">
-                              <StatusBadge converged={r.converged} label={r.status} />
+                            <td className="p-2.5 font-bold text-amber-400">
+                              ω = {r.omega.toFixed(2)}
+                              {r.omega >= 2.0 && (
+                                <span className="ml-1.5 px-1.5 py-0.5 text-[9px] bg-purple-950 text-purple-300 border border-purple-700 rounded">
+                                  STRESS TEST
+                                </span>
+                              )}
                             </td>
-                            <td className="p-2.5 text-white">{r.iterations}</td>
+                            <td className="p-2.5">
+                              <StatusBadge
+                                converged={r.converged}
+                                label={r.omega >= 2.0 ? 'Stress Test: ω≥2 (Ostrowski-Reich Violation)' : r.status}
+                              />
+                            </td>
+                            <td className="p-2.5 text-white">{r.omega >= 2.0 ? '0 (Rejected)' : r.iterations}</td>
                             <td className="p-2.5 text-cyan-300">{Number(r.final_residual).toExponential(2)}</td>
                             <td className="p-2.5 text-gray-300">{Number(r.absolute_residual ?? 0).toExponential(2)}</td>
                             <td className="p-2.5 text-gray-200">{r.execution_time_ms} ms</td>
@@ -1482,7 +1511,7 @@ export function App() {
                               {(exp.mean_runtime_ms ?? exp.execution_time_ms).toFixed(2)} ± {(exp.std_runtime_ms ?? 0).toFixed(2)}
                             </td>
                             <td className="p-2.5 text-cyan-300 font-bold">{(exp.speedup_vs_lu_median ?? 1.0).toFixed(2)}×</td>
-                            <td className="p-2.5 text-gray-200">{exp.iterations}</td>
+                            <td className="p-2.5 text-gray-200">{exp.iterations_display ?? (exp.solver_id === 'direct_lu' ? 'N/A (Direct)' : exp.iterations)}</td>
                             <td className="p-2.5 text-cyan-300">{Number(exp.final_residual).toExponential(2)}</td>
                             <td className="p-2.5 text-gray-200">{exp.memory_mb.toFixed(2)} MB</td>
                             <td className="p-2.5 text-rose-400">
@@ -1853,12 +1882,16 @@ export function App() {
                     </div>
                   </div>
 
-                  <div className="bg-cyan-950/40 border border-cyan-800/60 p-4 rounded-xl text-xs font-mono text-cyan-200 space-y-1">
+                  <div className="bg-cyan-950/40 border border-cyan-800/60 p-4 rounded-xl text-xs font-mono text-cyan-200 space-y-2">
                     <div>
                       <strong className="text-cyan-300">Best Design Found Within Tested Configurations:</strong> {optData.engineering_recommendation}
                     </div>
+                    <div className="text-[11px] text-gray-300 leading-relaxed border-t border-cyan-900/50 pt-2">
+                      <strong className="text-emerald-400">Objective Independence &amp; Pareto Dominance Methodology:</strong>{' '}
+                      Under fixed power Q and ambient T_∞, Thermal Resistance R_th = (T_max - T_∞)/Q and Cooling Conductance G_th = 1/R_th are exact mathematical reciprocals (and T_max = T_∞ + Q·R_th is an affine transform), representing a single thermal objective axis f₁. The non-dominated Pareto Frontier strictly evaluates dominance across the two genuinely independent conflicting physical objectives: f₁ = Minimize Thermal Resistance R_th (K/W) vs. f₂ = Minimize Solid Mass m = ρ·V_solid (g).
+                    </div>
                     <div className="text-[11px] text-gray-400">
-                      Scope Note: {optData.optimal_point?.scope_note}
+                      Scope &amp; Search Limitation: {optData.optimal_point?.scope_note}
                     </div>
                   </div>
                 </div>
