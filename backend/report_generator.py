@@ -728,8 +728,8 @@ def generate_comprehensive_engineering_pdf(output_filepath: str) -> str:
     # ================= 6. INTERACTIVE WEB PLATFORM SCREENSHOT ATLAS =================
     ss_dir = os.path.join(os.path.dirname(__file__), "report_assets", "website_screenshots")
     screenshot_items = [
-        ("01_3d_simulation_temperature.png", "Page 1 — 3D Simulation Workspace (Temperature Contour °C Mode)",
-         "Interactive 3D FEM viewport displaying the Complex Perforated Heat Sink temperature distribution [63.53°C – 74.56°C], SOR ω & T₀ controls, Global Energy Balance card (3.99e-10% error), and live 3-solver status cards."),
+        ("01_3d_simulation_temperature.png", "Page 1 — 3D Simulation Workspace (Temperature Contour °C Mode & v3.1.0-RESEARCH Controls)",
+         "Interactive 3D FEM viewport displaying the Complex Perforated Heat Sink temperature distribution [63.53°C – 74.56°C], parametric fin thickness/spacing ratios, SOR ω & T₀ controls, N=10 Statistical Repetitions selector, Global Energy Balance card (3.99e-10% error), and live 3-solver status cards."),
         ("02_3d_simulation_heat_flux.png", "Page 2 — 3D Simulation Workspace (Fourier Heat Flux |q| in W/m² Mode)",
          "3D heat flux vector field and surface colored by actual computed heat flux magnitude |q| = |-k∇T| spanning [1,421 W/m² – 85,862 W/m²] with calibrated HEAT FLUX |q| (W/m²) legend."),
         ("03_3d_simulation_hotspot_probe.png", "Page 3 — 3D Simulation Workspace (Hotspot Isolation & Exact Nodal Surface Probe)",
@@ -738,20 +738,20 @@ def generate_comprehensive_engineering_pdf(output_filepath: str) -> str:
          "Finite element mesh discretization overlay showing the 1,302 active 8-node trilinear hexahedral brick elements and 1,434 exterior convective boundary quad faces."),
         ("05_3d_simulation_cross_section.png", "Page 5 — 3D Simulation Workspace (Cross-Sectional Internal Conduction View)",
          "Real-time clipping plane slicing through the heat sink assembly to expose internal 3D heat spreading from the central bottom die to the vertical fin tips."),
-        ("06_solver_arena_converged_and_omega_sweep.png", "Page 6 — Solver Battle Arena (Converged ω=1.90 & Empirical ω Sweep Audit)",
-         "Automated Engineering Conclusions panel, 3 converged solver cards, unsampled iteration-by-iteration residual trajectory (394 points plotted), and the 8-point SOR relaxation parameter ω ∈ [0.80, 2.05] empirical audit table."),
+        ("06_solver_arena_converged_and_omega_sweep.png", "Page 6 — Solver Battle Arena (N=10 Statistical Benchmarking, Solver Decision Map & ω Sweep)",
+         "N=10 repeated-run statistical solver cards (Median, Mean ± Std, Min–Max, Speedup vs LU), Empirically Grounded Solver Decision Intelligence Map (Confidence 94%), unsampled residual trajectory (394 points), and 8-point SOR ω ∈ [0.80, 2.05] empirical audit table."),
         ("07_solver_arena_unconverged_omega_135.png", "Page 7 — Solver Battle Arena (Honest Unconverged SOR ω=1.35 Diagnosis)",
          "Explicit 'MAXIMUM ITERATIONS REACHED (UNCONVERGED)' status badge for SOR at ω=1.35, showing the 1,500-iteration unsampled residual curve (1,501 points) terminating above the 1e-6 tolerance threshold."),
-        ("08_benchmark_3x3_nine_experiments.png", "Page 8 — 3 × 3 Geometry-Solver Research Benchmark Dashboard (Nine Experiments)",
-         "Complete 9-experiment matrix (EXP-1 to EXP-9) running Direct Sparse LU, Preconditioned CG, and SOR on the exact same assembled (K, F) across (A) Standard, (B) Asymmetric, and (C) Complex Perforated heat sinks."),
-        ("09_verification_and_mesh_laboratory.png", "Page 9 — Numerical Verification & Spatial Grid Convergence Laboratory",
-         "Closed-form 3D analytical bar verification across 4 grid refinement levels (Nx = 8, 16, 32, 64) demonstrating exact second-order L2 convergence (observed p = 2.0000, STATUS: PASS) alongside the 3D heat sink mesh refinement study."),
-        ("10_parametric_optimization_sweep.png", "Page 10 — Parametric Design Optimization Suite",
-         "Multi-point fin density sweep (4 to 12 fins) identifying 8 fins as the minimum junction temperature configuration (73.52 °C, 1.214 W/K cooling efficiency)."),
-        ("11_experiments_repository.png", "Page 11 — Reproducible Experiments Repository",
-         "Persistent experiment management dashboard storing geometry presets, material parameters, boundary conditions, and solver benchmarks."),
-        ("12_thermo_ai_copilot.png", "Page 12 — THERMO AI Thermal Engineering Copilot",
-         "Context-aware engineering copilot answering technical questions using actual computed FEM residuals, iteration counts, and temperature gradients.")
+        ("08_benchmark_3x3_nine_experiments.png", "Page 8 — 3 × 3 Geometry-Solver Statistical Benchmark (N=10 Repetitions, 90 Runs & 5 Charts)",
+         "Complete 9-experiment statistical matrix (EXP-1 to EXP-9, N=10 trials per cell = 90 solver executions) with 5 comparative charts (Median Runtime, Mean ± Std Distribution, Memory vs Runtime, Speedup vs LU, Iterations vs Complexity)."),
+        ("09_verification_and_mesh_laboratory.png", "Page 9 — Numerical Verification, 3-Level Grid Convergence & Residual vs. Solution Error Lab",
+         "3D Analytical Bar Verification (Nx = 8, 16, 32, 64; observed L2 order p = 2.0000, PASS), Global Energy Balance card, Residual Error vs. Solution Error separation table, and 3-Level (Coarse 16×12×10, Medium 24×18×14, Fine 32×24×18) 3D Heat Sink Grid Convergence Curve."),
+        ("10_parametric_optimization_sweep.png", "Page 10 — Multi-Objective Parametric Design Optimization & Pareto Frontier Studio",
+         "8-Parameter × 5-Objective Parametric Optimization Studio highlighting the non-dominated Pareto Frontier (★ PARETO OPTIMAL badges, Solid Volume cm³, Mass g, R_th K/W, G_th W/K) and 'Best design found within tested configurations' (8 fins: 73.52°C, 0.8234 K/W, 370.4 g)."),
+        ("11_experiments_repository.png", "Page 11 — Reproducible Experiments Repository, Live Replay & Multi-Experiment Parameter Diff",
+         "Persistent experiment repository (v3.1.0-RESEARCH) with one-click 'Replay in 3D' reconstruction and live Multi-Experiment Comparison table isolating Changed Input Parameters, Unchanged Constants, and Side-by-Side Output Metrics."),
+        ("12_thermo_ai_copilot.png", "Page 12 — THERMO AI Context-Aware Thermal Engineering Copilot (9 Prompts & Structured Output)",
+         "Context-aware engineering copilot featuring 9 suggested diagnostic queries and strictly structured responses separating NUMERICAL RESULT from AI INTERPRETATION.")
     ]
 
     existing_ss = [(os.path.join(ss_dir, fn), title, desc) for fn, title, desc in screenshot_items if os.path.exists(os.path.join(ss_dir, fn))]
@@ -793,8 +793,8 @@ def generate_website_screenshots_pdf(output_filepath: str) -> str:
     """
     ss_dir = os.path.join(os.path.dirname(__file__), "report_assets", "website_screenshots")
     screenshot_items = [
-        ("01_3d_simulation_temperature.png", "1. 3D Simulation Workspace — Temperature Contour (°C) Mode",
-         "Complex Perforated Heat Sink (2,080 DOF, Aluminium 6061-T6, 65 W die, h=45 W/m²K): T_min = 63.53°C, T_max = 74.56°C, Global Energy Balance Error = 3.99e-10%."),
+        ("01_3d_simulation_temperature.png", "1. 3D Simulation Workspace — Temperature Contour (°C) Mode & v3.1.0-RESEARCH Controls",
+         "Complex Perforated Heat Sink (2,080 DOF, Aluminium 6061-T6, 65 W die, h=45 W/m²K): T_min = 63.53°C, T_max = 74.56°C, Parametric Fin Ratios, N=10 Statistical Repetitions control, Global Energy Balance Error = 3.99e-10%."),
         ("02_3d_simulation_heat_flux.png", "2. 3D Simulation Workspace — Fourier Heat Flux |q| = |-k∇T| (W/m²) Mode",
          "3D heat flux vector arrows and surface colored by actual computed heat flux magnitude in W/m² [1,421 W/m² – 85,862 W/m²] with dedicated HEAT FLUX |q| (W/m²) legend."),
         ("03_3d_simulation_hotspot_probe.png", "3. 3D Simulation Workspace — Hotspot Isolation & Exact FEM Nodal Surface Probe",
@@ -803,20 +803,20 @@ def generate_website_screenshots_pdf(output_filepath: str) -> str:
          "Discretization view showing 1,302 active 8-node trilinear hexahedral elements and 1,434 exterior convective boundary quad faces."),
         ("05_3d_simulation_cross_section.png", "5. 3D Simulation Workspace — Cross-Sectional Internal Conduction Analysis",
          "Cross-sectional clipping plane revealing internal 3D heat conduction gradients from the bottom silicon die to the stepped base and vertical fins."),
-        ("06_solver_arena_converged_and_omega_sweep.png", "6. Solver Battle Arena — Converged Benchmark & SOR Relaxation Factor (ω) Empirical Sweep",
-         "Automated Engineering Conclusions, 3 Solver Audit Cards, Unsampled Residual Trajectory (394 points), and 8-point SOR ω ∈ [0.80, 2.05] empirical audit table."),
+        ("06_solver_arena_converged_and_omega_sweep.png", "6. Solver Battle Arena — N=10 Statistical Benchmarking, Solver Decision Map & SOR (ω) Sweep",
+         "N=10 statistical solver cards (Median, Mean ± Std, Min–Max, Speedup), Empirically Grounded Solver Decision Intelligence Map, Unsampled Residual Trajectory (394 points), and 8-point SOR ω ∈ [0.80, 2.05] empirical audit table."),
         ("07_solver_arena_unconverged_omega_135.png", "7. Solver Battle Arena — Honest Unconverged SOR (ω=1.35) Failure Detection",
          "Explicit 'MAXIMUM ITERATIONS REACHED (UNCONVERGED)' status badge for SOR at ω=1.35 with full 1,501-point unsampled residual trajectory terminating above tolerance."),
-        ("08_benchmark_3x3_nine_experiments.png", "8. 3 × 3 Geometry-Solver Research Benchmark Dashboard (Nine Experiments)",
-         "Complete 9-experiment matrix (EXP-1 to EXP-9) comparing Direct Sparse LU, Preconditioned CG, and SOR across (A) Standard, (B) Asymmetric, and (C) Complex Perforated heat sinks."),
-        ("09_verification_and_mesh_laboratory.png", "9. Numerical Verification & Spatial Grid Convergence Laboratory",
-         "3D Analytical Bar Benchmark across 4 grid levels (Nx = 8, 16, 32, 64) confirming observed L2 order p = 2.0000 (STATUS: PASS) alongside the 3D heat sink mesh refinement study."),
-        ("10_parametric_optimization_sweep.png", "10. Parametric Design Optimization Suite",
-         "Multi-point fin count sweep (4, 6, 8, 10, 12 fins) identifying 8 fins as optimal for minimizing peak junction temperature (73.52°C, 1.214 W/K)."),
-        ("11_experiments_repository.png", "11. Reproducible Experiments Repository",
-         "Saved simulation runs recording geometry preset, material properties, boundary conditions, peak temperature, and solver runtime."),
-        ("12_thermo_ai_copilot.png", "12. THERMO AI — Context-Aware Thermal Engineering Copilot",
-         "Interactive engineering Q&A grounded in actual computed FEM residuals, Krylov subspace convergence metrics, and thermal gradients.")
+        ("08_benchmark_3x3_nine_experiments.png", "8. 3 × 3 Geometry-Solver Statistical Benchmark Dashboard (N=10 Repetitions, 90 Runs & 5 Charts)",
+         "Complete 9-experiment statistical matrix (EXP-1 to EXP-9, N=10 trials per cell) with 5 comparative charts (Median Runtime, Mean ± Std Distribution, Memory vs Runtime, Speedup vs LU, Iterations vs Complexity)."),
+        ("09_verification_and_mesh_laboratory.png", "9. Numerical Verification, 3-Level Grid Convergence & Residual vs. Solution Error Laboratory",
+         "3D Analytical Bar Benchmark (Nx = 8, 16, 32, 64; observed L2 order p = 2.0000, PASS), Global Energy Balance card, Residual vs. Solution Error separation table, and 3-Level (Coarse, Medium, Fine) 3D Heat Sink Grid Convergence Curve."),
+        ("10_parametric_optimization_sweep.png", "10. Multi-Objective Parametric Design Optimization & Pareto Frontier Studio",
+         "8-Parameter × 5-Objective Parametric Optimization Studio highlighting the non-dominated Pareto Frontier (★ PARETO OPTIMAL badges, Solid Volume cm³, Mass g, R_th K/W, G_th W/K) and best tested design (8 fins: 73.52°C, 0.8234 K/W, 370.4 g)."),
+        ("11_experiments_repository.png", "11. Reproducible Experiments Repository, Live Replay & Multi-Experiment Parameter Diff",
+         "Persistent experiment repository (v3.1.0-RESEARCH) with one-click 'Replay in 3D' reconstruction and live Multi-Experiment Comparison table isolating Changed Input Parameters, Unchanged Constants, and Side-by-Side Output Metrics."),
+        ("12_thermo_ai_copilot.png", "12. THERMO AI — Context-Aware Thermal Engineering Copilot (9 Prompts & Structured Output)",
+         "Interactive engineering Q&A featuring 9 suggested diagnostic queries and strictly structured responses separating NUMERICAL RESULT from AI INTERPRETATION.")
     ]
 
     doc = SimpleDocTemplate(
